@@ -1,5 +1,6 @@
 package com.s0undplus.tv.ui.home
 
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -143,7 +145,13 @@ fun HomeScreen(
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 20.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 48.dp, vertical = 20.dp)
+                // Tabs select on focus, so pressing Up from a card must land on the *active* tab. Without this,
+                // focus goes to whichever pill is geometrically above that card and silently swaps the content.
+                .focusProperties { enter = { tabRequesters.getValue(vm.tab) } }
+                .focusGroup(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {

@@ -6,6 +6,16 @@ A from-scratch, modern Twitch viewer for **Google TV / Android TV** — inspired
 > S0undPlus is an unofficial, independent project. It is not affiliated with or endorsed by Twitch Interactive, Inc.
 > or the S0undTV project, and contains none of their code.
 
+## Quick start (3 steps — the CI APK needs your Twitch client ID)
+
+The APK that GitHub Actions builds only works if a Twitch **client ID** was provided at build time. Without it, the app
+opens on a "needs a Twitch client ID" screen. To get a working build:
+
+1. Register a free **Public** application at <https://dev.twitch.tv/console> (details in [Setup](#setup)).
+2. In this repository: **Settings → Secrets and variables → Actions → New repository secret**, name it
+   `TWITCH_CLIENT_ID`, paste the client ID.
+3. Re-run the **Build** workflow, download the **S0undPlus-release-apk** artifact, and [sideload it](#build--install).
+
 ## Features
 
 | | |
@@ -127,7 +137,10 @@ What has and hasn't been verified (as of the first release):
 
 - ✅ `twitch-core`: 54 unit tests pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
   refresh, device-code polling, playlist/IRC/emote parsing, a real WebSocket round-trip with reconnect.
-- ✅ The Android app **compiles and packages** on GitHub Actions (AGP 9.4, Gradle 9.6, Kotlin 2.4, `compileSdk` 37).
+- ✅ The Android app **compiles and packages** on GitHub Actions (AGP 9.4, Gradle 9.6, Kotlin 2.4, `compileSdk` 37),
+  Android lint reports **0 errors** (including its TV/Leanback manifest checks), and CI inspects the built APK with
+  `aapt2` to confirm the packaged manifest (Leanback launcher activity, banner, target SDK) and that the app's classes
+  made it into the dex.
 - ⚠️ **Not yet exercised on a real device against live Twitch.** The Twitch request/response shapes were taken from
   Twitch's docs and from reading open-source clients (Streamlink, Xtra), and the 7TV/BTTV/FFZ parsers were written
   against documented response shapes — but none of these services were reachable from the environment this was built
