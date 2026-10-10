@@ -65,6 +65,10 @@ class HelixApi(
         "after" to after,
     )
 
+    /** The live stream of one channel, or null when it is offline. */
+    suspend fun streamByLogin(login: String): Stream? =
+        page("streams", Stream.serializer(), "user_login" to login, "first" to 1).items.firstOrNull()
+
     suspend fun topCategories(after: String? = null, first: Int = 30): Page<Category> =
         page("games/top", Category.serializer(), "first" to first, "after" to after)
 
