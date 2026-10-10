@@ -1,10 +1,15 @@
 package com.s0undplus.tv.ui.player
 
+import android.content.Context
+import android.media.AudioManager
+import android.os.SystemClock
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +20,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,8 +33,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -34,8 +44,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,33 +68,59 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import coil3.compose.AsyncImage
 import com.s0undplus.tv.LocalActivityBridge
 import com.s0undplus.tv.LocalAppContainer
+import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.data.ChatLayout
+import com.s0undplus.tv.ui.components.ClockText
 import com.s0undplus.tv.ui.components.FocusSurface
 import com.s0undplus.tv.ui.components.MessageState
 import com.s0undplus.tv.ui.components.PillButton
+import com.s0undplus.tv.ui.components.QrDialog
 import com.s0undplus.tv.ui.components.Spinner
 import com.s0undplus.tv.ui.nav.PlayTarget
+import com.s0undplus.tv.ui.nav.toPlayTarget
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.util.Format
 import com.s0undplus.tv.ui.util.rememberScreenScope
+import com.s0undplus.twitch.Stream
+import com.s0undplus.twitch.eventsub.RaidEvent
+import com.s0undplus.twitch.library.FavoriteChannel
+import com.s0undplus.twitch.library.HistoryEntry
+import com.s0undplus.twitch.playback.AutoRefreshPolicy
 import com.s0undplus.twitch.playback.PlaybackStream
 import com.s0undplus.twitch.playback.QualityPreference
+import com.s0undplus.twitch.playback.RefreshMode
+import com.s0undplus.twitch.playback.RefreshStep
+import com.s0undplus.twitch.playback.StallDetector
 import com.s0undplus.twitch.playback.Variant
+import kotlin.math.abs
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import android.view.KeyEvent as AndroidKeyEvent
 
-private enum class Menu { None, Quality }
+private enum class Menu { None, Quality, Peek }
 
 private const val SEEK_SMALL_MS = 10_000L
 private const val SEEK_LARGE_MS = 30_000L
 private const val CONTROLS_TIMEOUT_MS = 6_000L
+private const val RAID_COUNTDOWN_SECONDS = 10
+private const val RESUME_WAIT_MS = 12_000L
+private const val GESTURE_THRESHOLD_PX = 140f
 private val CHAT_WIDTH = 380.dp
 
 @OptIn(UnstableApi::class)
 @Composable
-fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
+fun PlayerScreen(
+    target: PlayTarget,
+    onExit: () -> Unit,
+    onOpenChannel: (String) -> Unit,
+    onSwitch: (PlayTarget) -> Unit,
+) {
     val container = LocalAppContainer.current
     val bridge = LocalActivityBridge.current
     val context = LocalContext.current
@@ -91,7 +130,15 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
     val controller = remember(target) { PlayerController(container, target, screenScope) }
     val settings by controller.settings.collectAsStateWithLifecycle()
     val phase by controller.phase.collectAsStateWithLifecycle()
+    val others by controller.others.collectAsStateWithLifecycle()
+    val raid by controller.raid.collectAsStateWithLifecycle()
+    val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     val isLive = controller.isLive
+    val channelLogin = when (target) {
+        is PlayTarget.Live -> target.login
+        is PlayTarget.Vod -> target.channelLogin
+    }
+    val isFavorite = favorites.any { it.login.equals(channelLogin, ignoreCase = true) }
 
     val exo = remember {
         ExoPlayer.Builder(context)
@@ -115,19 +162,43 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var resumeAfterStop by remember { mutableStateOf(false) }
+    var recoveryMessage by remember { mutableStateOf<String?>(null) }
+    var endedNote by remember { mutableStateOf<String?>(null) }
+    var showChatQr by remember { mutableStateOf(false) }
+    var raidSeconds by remember { mutableIntStateOf(RAID_COUNTDOWN_SECONDS) }
+
+    val recoveryJob = remember { arrayOfNulls<Job>(1) }
+    val stall = remember { StallDetector() }
 
     val rootFocus = remember { FocusRequester() }
     val firstControl = remember { FocusRequester() }
     val selectedQualityItem = remember { FocusRequester() }
+    val firstPeekItem = remember { FocusRequester() }
 
     val ready = (phase as? PlayerController.Phase.Ready)?.stream
-    val chatShown = settings.chatVisible && controller.chat != null && !bridge.inPip
+    val chatShown = settings.chatVisible && !bridge.inPip
 
-    fun saveVodPosition() {
+    fun saveProgress() {
         val vod = target as? PlayTarget.Vod ?: return
         val position = exo.currentPosition
         val duration = exo.duration.takeIf { it != C.TIME_UNSET } ?: 0L
-        container.appScope.launch { container.settings.saveVodPosition(vod.id, position, duration) }
+        container.appScope.launch {
+            container.settings.saveVodPosition(vod.id, position, duration)
+            if (position >= 15_000) {
+                container.settings.recordHistory(
+                    HistoryEntry(
+                        videoId = vod.id,
+                        title = vod.title,
+                        channelName = vod.channelName,
+                        channelLogin = vod.channelLogin,
+                        durationSeconds = vod.durationSeconds,
+                        thumbnailUrl = vod.thumbnailUrl,
+                        positionMs = position,
+                        watchedAtMillis = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
     }
 
     fun seekBy(deltaMs: Long) {
@@ -139,39 +210,131 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
         if (exo.isPlaying) exo.pause() else exo.play()
     }
 
+    fun toggleChat() {
+        uiScope.launch { container.settings.update { it.copy(chatVisible = !it.chatVisible) } }
+    }
+
+    fun openPeek() {
+        controller.loadOthers()
+        menu = Menu.Peek
+    }
+
+    /** Switches to the next/previous live channel in the viewer's followed list (the remote's Channel +/- keys). */
+    fun surf(delta: Int) {
+        uiScope.launch {
+            controller.loadOthers()
+            val list = withTimeoutOrNull(4_000) { controller.others.first { it.isNotEmpty() } } ?: return@launch
+            val candidates = list.filterNot { it.userLogin.equals(channelLogin, ignoreCase = true) }
+            if (candidates.isEmpty()) return@launch
+            val currentIndex = list.indexOfFirst { it.userLogin.equals(channelLogin, ignoreCase = true) }
+            val next = if (currentIndex < 0) candidates.first() else list[Math.floorMod(currentIndex + delta, list.size)]
+            if (!next.userLogin.equals(channelLogin, ignoreCase = true)) onSwitch(next.toPlayTarget())
+        }
+    }
+
+    fun goToRaid(r: RaidEvent) {
+        controller.dismissRaid()
+        onSwitch(PlayTarget.Live(r.toLogin, r.toDisplayName, r.toUserId))
+    }
+
+    /**
+     * Recovers a live stream that stopped or stalled: re-request a *fresh* playback token and playlist (tokens
+     * expire, so merely calling prepare() again would just fail), at most N times, checking first that the streamer
+     * hasn't actually gone offline.
+     */
+    fun startRecovery() {
+        if (!isLive || !settings.autoRefresh) return
+        if (recoveryJob[0]?.isActive == true) return
+        recoveryJob[0] = uiScope.launch {
+            val policy = AutoRefreshPolicy(settings.refreshMode, settings.refreshAttempts, settings.refreshIntervalSeconds * 1_000L)
+            var attempt = 0
+            try {
+                while (true) {
+                    when (val step = policy.next(attempt, controller.isStillLive())) {
+                        RefreshStep.Offline -> {
+                            endedNote = "The stream has ended."
+                            return@launch
+                        }
+                        RefreshStep.GaveUp -> {
+                            playerError = "STALLED"
+                            return@launch
+                        }
+                        is RefreshStep.Retry -> {
+                            recoveryMessage = "Reconnecting… (${attempt + 1}/${policy.maxAttempts})"
+                            delay(step.delayMs)
+                            controller.load()
+                            val after = controller.phase.first { it !is PlayerController.Phase.Loading }
+                            if (after is PlayerController.Phase.Ready) {
+                                val resumed = withTimeoutOrNull(RESUME_WAIT_MS) { snapshotFlow { playing }.first { it } }
+                                if (resumed != null) return@launch
+                            } else if (after is PlayerController.Phase.Failed && after.offline && policy.mode == RefreshMode.NORMAL) {
+                                endedNote = "The stream has ended."
+                                return@launch
+                            }
+                            attempt++
+                        }
+                    }
+                }
+            } finally {
+                recoveryMessage = null
+            }
+        }
+    }
+
+    fun adjustVolume(up: Boolean) {
+        val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audio.adjustStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+            AudioManager.FLAG_SHOW_UI,
+        )
+    }
+
     // --- Player wiring -------------------------------------------------------------------------------------------
 
     DisposableEffect(exo) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 buffering = playbackState == Player.STATE_BUFFERING
-                if (playbackState == Player.STATE_READY) playerError = null
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> stall.onBuffering(SystemClock.elapsedRealtime())
+                    Player.STATE_READY -> {
+                        stall.onProgress()
+                        playerError = null
+                        endedNote = null
+                    }
+                    Player.STATE_ENDED -> if (isLive) startRecovery()
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
+                if (isPlaying) stall.onProgress()
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-                    // We fell too far behind the live edge (e.g. a long stall): jump back to live and carry on.
-                    exo.seekToDefaultPosition()
-                    exo.prepare()
-                } else {
-                    playerError = error.errorCodeName
+                when {
+                    error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
+                        // We fell too far behind the live edge (e.g. a long stall): jump back to live and carry on.
+                        exo.seekToDefaultPosition()
+                        exo.prepare()
+                    }
+                    isLive && settings.autoRefresh -> startRecovery()
+                    else -> playerError = error.errorCodeName
                 }
             }
         }
         exo.addListener(listener)
         onDispose {
             exo.removeListener(listener)
-            saveVodPosition()
+            recoveryJob[0]?.cancel()
+            saveProgress()
             exo.release()
         }
     }
 
-    DisposableEffect(ready != null) {
-        bridge.pipEligible = ready != null
+    DisposableEffect(ready != null, settings.pipOnHome) {
+        bridge.pipEligible = ready != null && settings.pipOnHome
         onDispose { bridge.pipEligible = false }
     }
 
@@ -198,11 +361,23 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
         }
     }
 
-    if (!isLive) {
+    if (isLive) {
+        // A stream that sits in "buffering" without erroring is the commonest way Twitch streams die: catch it.
         LaunchedEffect(exo) {
             while (true) {
+                delay(2_000)
+                if (stall.isStalled(SystemClock.elapsedRealtime())) {
+                    stall.onProgress()
+                    startRecovery()
+                }
+            }
+        }
+    } else {
+        LaunchedEffect(exo) {
+            controller.startReplay { exo.currentPosition }
+            while (true) {
                 delay(20_000)
-                saveVodPosition()
+                saveProgress()
             }
         }
     }
@@ -211,7 +386,7 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
         // Fires when the app is backgrounded *or* the PiP window is dismissed: never keep playing invisibly.
         resumeAfterStop = exo.playWhenReady
         exo.pause()
-        saveVodPosition()
+        saveProgress()
     }
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
         if (resumeAfterStop) {
@@ -221,12 +396,24 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
         }
     }
 
+    // Raid redirect: count down, then follow the raid unless the viewer cancels with Back.
+    LaunchedEffect(raid) {
+        val r = raid ?: return@LaunchedEffect
+        raidSeconds = RAID_COUNTDOWN_SECONDS
+        while (raidSeconds > 0) {
+            delay(1_000)
+            raidSeconds--
+        }
+        goToRaid(r)
+    }
+
     // --- Focus + controls visibility -----------------------------------------------------------------------------
 
     LaunchedEffect(controlsVisible, menu) {
         try {
             when {
                 menu == Menu.Quality -> selectedQualityItem.requestFocus()
+                menu == Menu.Peek -> firstPeekItem.requestFocus()
                 controlsVisible -> firstControl.requestFocus()
                 else -> rootFocus.requestFocus()
             }
@@ -244,6 +431,7 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
 
     BackHandler {
         when {
+            raid != null -> controller.dismissRaid()
             menu != Menu.None -> menu = Menu.None
             controlsVisible -> controlsVisible = false
             else -> onExit()
@@ -257,10 +445,59 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(rootFocus)
+            .pointerInput(settings.gestures) {
+                if (!settings.gestures) return@pointerInput
+                detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+            }
+            .pointerInput(settings.gestures, isLive) {
+                if (!settings.gestures) return@pointerInput
+                var dx = 0f
+                var dy = 0f
+                detectDragGestures(
+                    onDragStart = {
+                        dx = 0f
+                        dy = 0f
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        dx += amount.x
+                        dy += amount.y
+                    },
+                    onDragEnd = {
+                        when {
+                            abs(dy) >= abs(dx) && abs(dy) > GESTURE_THRESHOLD_PX -> adjustVolume(up = dy < 0)
+                            abs(dx) > GESTURE_THRESHOLD_PX && isLive -> {
+                                // Swipe left to reveal chat, right to tuck it away.
+                                uiScope.launch { container.settings.update { it.copy(chatVisible = dx < 0) } }
+                            }
+                            abs(dx) > GESTURE_THRESHOLD_PX -> seekBy(if (dx > 0) SEEK_LARGE_MS else -SEEK_LARGE_MS)
+                        }
+                    },
+                )
+            }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 interaction++
-                // Media keys work everywhere.
+                val confirm = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
+                raid?.let { r ->
+                    if (confirm) {
+                        goToRaid(r)
+                        return@onPreviewKeyEvent true
+                    }
+                }
+                // Remote shortcuts (colour buttons, channel +/-, info/menu) work everywhere.
+                when (event.nativeKeyEvent.keyCode) {
+                    AndroidKeyEvent.KEYCODE_PROG_RED -> { toggleChat(); return@onPreviewKeyEvent true }
+                    AndroidKeyEvent.KEYCODE_PROG_GREEN -> { menu = Menu.Quality; return@onPreviewKeyEvent true }
+                    AndroidKeyEvent.KEYCODE_PROG_YELLOW -> { audioOnly = !audioOnly; return@onPreviewKeyEvent true }
+                    AndroidKeyEvent.KEYCODE_PROG_BLUE -> { if (isLive) openPeek(); return@onPreviewKeyEvent true }
+                    AndroidKeyEvent.KEYCODE_CHANNEL_UP -> { if (isLive) surf(+1); return@onPreviewKeyEvent true }
+                    AndroidKeyEvent.KEYCODE_CHANNEL_DOWN -> { if (isLive) surf(-1); return@onPreviewKeyEvent true }
+                    AndroidKeyEvent.KEYCODE_INFO, AndroidKeyEvent.KEYCODE_MENU -> {
+                        controlsVisible = true
+                        return@onPreviewKeyEvent true
+                    }
+                }
                 when (event.key) {
                     Key.MediaPlayPause -> { togglePlayback(); return@onPreviewKeyEvent true }
                     Key.MediaPlay -> { exo.play(); return@onPreviewKeyEvent true }
@@ -270,22 +507,26 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
                 }
                 // With the overlay hidden, the D-pad drives playback instead of moving focus.
                 if (controlsVisible || menu != Menu.None) return@onPreviewKeyEvent false
-                when (event.key) {
-                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.DirectionUp, Key.DirectionDown -> {
+                when {
+                    confirm || event.key == Key.DirectionUp -> {
                         controlsVisible = true
                         true
                     }
-                    Key.DirectionLeft -> {
+                    event.key == Key.DirectionDown -> {
+                        if (isLive) openPeek() else controlsVisible = true
+                        true
+                    }
+                    event.key == Key.DirectionLeft -> {
                         if (isLive) {
-                            if (settings.chatVisible) uiScope.launch { container.settings.update { it.copy(chatVisible = false) } }
+                            if (settings.chatVisible) toggleChat()
                         } else {
                             seekBy(-SEEK_SMALL_MS)
                         }
                         true
                     }
-                    Key.DirectionRight -> {
+                    event.key == Key.DirectionRight -> {
                         if (isLive) {
-                            if (!settings.chatVisible) uiScope.launch { container.settings.update { it.copy(chatVisible = true) } }
+                            if (!settings.chatVisible) toggleChat()
                         } else {
                             seekBy(SEEK_SMALL_MS)
                         }
@@ -306,12 +547,12 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             setKeepContentOnPlayerReset(true)
                             setShutterBackgroundColor(android.graphics.Color.BLACK)
-                            keepScreenOn = true
                             isFocusable = false
                             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
                             player = exo
                         }
                     },
+                    update = { it.keepScreenOn = settings.keepScreenOn },
                     modifier = Modifier.fillMaxSize(),
                 )
 
@@ -324,19 +565,31 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
 
                 when (val p = phase) {
                     PlayerController.Phase.Loading -> CenteredSpinner()
-                    is PlayerController.Phase.Failed -> MessageState(
-                        p.message,
-                        Modifier.fillMaxSize().background(Color.Black),
-                        actionLabel = if (p.offline) "Back" else "Try again",
-                        onAction = if (p.offline) onExit else controller::load,
-                    )
+                    is PlayerController.Phase.Failed -> if (recoveryMessage == null) {
+                        MessageState(
+                            p.message,
+                            Modifier.fillMaxSize().background(Color.Black),
+                            actionLabel = if (p.offline) "Back" else "Try again",
+                            onAction = if (p.offline) onExit else controller::load,
+                        )
+                    }
                     is PlayerController.Phase.Ready -> {
-                        if (playerError != null) {
+                        if (endedNote != null) {
                             MessageState(
-                                "Playback problem (${playerError}).",
+                                endedNote.orEmpty(),
+                                Modifier.fillMaxSize().background(Color(0xCC000000)),
+                                actionLabel = "Back",
+                                onAction = onExit,
+                            )
+                        } else if (playerError != null && recoveryMessage == null) {
+                            MessageState(
+                                "Playback problem ($playerError).",
                                 Modifier.fillMaxSize().background(Color(0xCC000000)),
                                 actionLabel = "Try again",
-                                onAction = { playerError = null; controller.load() },
+                                onAction = {
+                                    playerError = null
+                                    controller.load()
+                                },
                             )
                         } else if (buffering && !bridge.inPip) {
                             CenteredSpinner()
@@ -345,11 +598,20 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
                 }
 
                 if (chatShown && !side) {
-                    controller.chat?.let { chat ->
-                        ChatPanel(
-                            chat,
-                            settings.chatTextSize,
-                            Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(CHAT_WIDTH).background(Palette.Scrim),
+                    ChatPanel(
+                        controller.chat,
+                        settings,
+                        Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(CHAT_WIDTH).background(Palette.Scrim),
+                    )
+                }
+
+                if (!bridge.inPip) {
+                    recoveryMessage?.let { Banner(it, Modifier.align(Alignment.TopCenter)) }
+                    raid?.let { r ->
+                        Banner(
+                            "${r.fromLogin.ifEmpty { "This channel" }} is raiding ${r.toDisplayName} with ${Format.count(r.viewers)} viewers — " +
+                                "joining in ${raidSeconds}s · OK to go now · Back to stay",
+                            Modifier.align(Alignment.TopCenter),
                         )
                     }
                 }
@@ -360,30 +622,40 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
                         isLive = isLive,
                         playing = playing,
                         qualityLabel = qualityLabel,
-                        chatAvailable = controller.chat != null,
                         chatOn = settings.chatVisible,
                         audioOnly = audioOnly,
                         pipSupported = bridge.pipSupported,
+                        isFavorite = isFavorite,
+                        showClock = settings.showClock,
                         positionMs = positionMs,
                         durationMs = durationMs,
                         firstControl = firstControl,
                         onPlayPause = ::togglePlayback,
                         onSeek = ::seekBy,
                         onQuality = { menu = Menu.Quality },
-                        onChat = { uiScope.launch { container.settings.update { it.copy(chatVisible = !it.chatVisible) } } },
+                        onChat = ::toggleChat,
                         onAudioOnly = { audioOnly = !audioOnly },
                         onPip = {
                             controlsVisible = false
                             bridge.enterPip()
                         },
+                        onPeek = ::openPeek,
+                        onFavorite = {
+                            val display = when (target) {
+                                is PlayTarget.Live -> target.displayName
+                                is PlayTarget.Vod -> target.channelName
+                            }
+                            val id = (target as? PlayTarget.Live)?.userId ?: (target as? PlayTarget.Vod)?.channelUserId
+                            uiScope.launch { container.settings.toggleFavorite(FavoriteChannel(channelLogin, display, id)) }
+                        },
+                        onChannel = { onOpenChannel(channelLogin) },
+                        onChatOnPhone = { showChatQr = true },
                     )
                 }
             }
 
             if (side) {
-                controller.chat?.let { chat ->
-                    ChatPanel(chat, settings.chatTextSize, Modifier.fillMaxHeight().width(CHAT_WIDTH).background(Palette.Background))
-                }
+                ChatPanel(controller.chat, settings, Modifier.fillMaxHeight().width(CHAT_WIDTH).background(Palette.Background))
             }
         }
 
@@ -404,6 +676,27 @@ fun PlayerScreen(target: PlayTarget, onExit: () -> Unit) {
                     uiScope.launch { container.settings.update { it.copy(quality = preference) } }
                     menu = Menu.None
                 },
+            )
+        }
+
+        if (menu == Menu.Peek && !bridge.inPip) {
+            PeekPanel(
+                streams = others.filterNot { it.userLogin.equals(channelLogin, ignoreCase = true) },
+                firstItem = firstPeekItem,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                onPick = { stream ->
+                    menu = Menu.None
+                    onSwitch(stream.toPlayTarget())
+                },
+            )
+        }
+
+        if (showChatQr) {
+            QrDialog(
+                title = "Chat from your phone",
+                subtitle = "S0undPlus chat is read-only. Scan to open this channel's chat on your phone and join in.",
+                url = "https://www.twitch.tv/popout/$channelLogin/chat?popout=",
+                onDismiss = { showChatQr = false },
             )
         }
     }
@@ -431,15 +724,30 @@ private fun CenteredSpinner() {
 }
 
 @Composable
+private fun Banner(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = Color.White,
+        modifier = modifier
+            .padding(top = 24.dp, start = 24.dp, end = 24.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Palette.Brand.copy(alpha = 0.92f))
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+    )
+}
+
+@Composable
 private fun ControlsOverlay(
     target: PlayTarget,
     isLive: Boolean,
     playing: Boolean,
     qualityLabel: String,
-    chatAvailable: Boolean,
     chatOn: Boolean,
     audioOnly: Boolean,
     pipSupported: Boolean,
+    isFavorite: Boolean,
+    showClock: Boolean,
     positionMs: Long,
     durationMs: Long,
     firstControl: FocusRequester,
@@ -449,23 +757,31 @@ private fun ControlsOverlay(
     onChat: () -> Unit,
     onAudioOnly: () -> Unit,
     onPip: () -> Unit,
+    onPeek: () -> Unit,
+    onFavorite: () -> Unit,
+    onChannel: () -> Unit,
+    onChatOnPhone: () -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
-        Column(
+        Row(
             Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent)))
                 .padding(horizontal = 48.dp, vertical = 28.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(titleOf(target), style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val subtitle = when (target) {
-                is PlayTarget.Live -> listOfNotNull(target.title, target.game).joinToString(" · ")
-                is PlayTarget.Vod -> target.channelName
+            Column(Modifier.weight(1f)) {
+                Text(titleOf(target), style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val subtitle = when (target) {
+                    is PlayTarget.Live -> listOfNotNull(target.title, target.game).joinToString(" · ")
+                    is PlayTarget.Vod -> target.channelName
+                }
+                if (subtitle.isNotBlank()) {
+                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Palette.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
-            if (subtitle.isNotBlank()) {
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Palette.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            if (showClock) ClockText()
         }
 
         Column(
@@ -486,9 +802,15 @@ private fun ControlsOverlay(
                 )
                 if (!isLive) PillButton("+30s", { onSeek(30_000) })
                 PillButton("Quality: $qualityLabel", onQuality)
-                if (chatAvailable) PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
+                PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
                 PillButton(if (audioOnly) "Audio only: On" else "Audio only", onAudioOnly, selected = audioOnly)
                 if (pipSupported) PillButton("Picture-in-picture", onPip)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (isLive) PillButton("Peek other streams", onPeek)
+                PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
+                PillButton("Channel page", onChannel)
+                PillButton("Chat on phone", onChatOnPhone)
             }
         }
     }
@@ -504,6 +826,62 @@ private fun SeekBar(positionMs: Long, durationMs: Long) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(Format.clock(positionMs / 1000), style = MaterialTheme.typography.labelMedium, color = Color.White)
             Text(Format.clock(durationMs / 1000), style = MaterialTheme.typography.labelMedium, color = Palette.Muted)
+        }
+    }
+}
+
+/**
+ * Peek view: browse other live channels without leaving the stream. Uses thumbnails only — a second live video
+ * decoder next to the playing stream is more than many Google TV chips can do.
+ */
+@Composable
+private fun PeekPanel(
+    streams: List<Stream>,
+    firstItem: FocusRequester,
+    onPick: (Stream) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Palette.Scrim, Palette.Scrim)))
+            .padding(start = 48.dp, end = 48.dp, top = 40.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Peek — pick a channel to switch (Back to close)", style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
+        if (streams.isEmpty()) {
+            Text("Loading channels…", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
+        } else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(streams, key = { it.userId }) { stream ->
+                    val isFirst = stream.userId == streams.first().userId
+                    FocusSurface(
+                        onClick = { onPick(stream) },
+                        modifier = Modifier.width(220.dp).let { if (isFirst) it.focusRequester(firstItem) else it },
+                    ) {
+                        Column {
+                            Box(Modifier.fillMaxWidth().height(124.dp)) {
+                                AsyncImage(
+                                    model = stream.thumbnail(320, 180),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            Column(Modifier.padding(10.dp)) {
+                                Text(stream.userName, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${Format.count(stream.viewerCount)} · ${stream.gameName}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Palette.Muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

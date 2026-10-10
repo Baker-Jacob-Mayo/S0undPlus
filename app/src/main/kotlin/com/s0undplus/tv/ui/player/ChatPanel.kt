@@ -31,7 +31,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.ui.theme.Palette
+import com.s0undplus.tv.ui.util.Format
 import com.s0undplus.twitch.chat.BadgeDirectory
 import com.s0undplus.twitch.chat.ChatFormatter
 import com.s0undplus.twitch.chat.ChatMessage
@@ -49,13 +51,25 @@ fun chatFontSize(level: Int): TextUnit = when (level) {
     else -> 18.sp
 }
 
+/** Emote height in ems of the chat font for the Small/Medium/Large emote setting. */
+private fun emoteEm(level: Int): Float = when (level) {
+    0 -> 1.2f
+    2 -> 2.0f
+    else -> 1.5f
+}
+
+private val TIME_FORMAT = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+
 @Composable
-fun ChatPanel(controller: ChatController, textSizeLevel: Int, modifier: Modifier = Modifier) {
+fun ChatPanel(controller: ChatController, settings: AppSettings, modifier: Modifier = Modifier) {
     val items by controller.items.collectAsStateWithLifecycle()
     val emotes by controller.emotes.collectAsStateWithLifecycle()
     val badges by controller.badges.collectAsStateWithLifecycle()
     val connected by controller.connected.collectAsStateWithLifecycle()
-    val fontSize = chatFontSize(textSizeLevel)
+    val replayError by controller.replayError.collectAsStateWithLifecycle()
+    val fontSize = chatFontSize(settings.chatTextSize)
+    val emoteLevel = settings.emoteSize
+    val timestamps = settings.chatTimestamps
     val listState = rememberLazyListState()
 
     Box(modifier) {
@@ -68,7 +82,7 @@ fun ChatPanel(controller: ChatController, textSizeLevel: Int, modifier: Modifier
         ) {
             items(items.asReversed(), key = { it.key }) { item ->
                 if (item.message != null) {
-                    ChatLine(item.message, emotes, badges, fontSize)
+                    ChatLine(item.message, item.deleted, emotes, badges, fontSize, emoteLevel, timestamps)
                 } else {
                     Text(
                         item.notice.orEmpty(),
@@ -80,15 +94,26 @@ fun ChatPanel(controller: ChatController, textSizeLevel: Int, modifier: Modifier
                 }
             }
         }
-        if (!connected && items.isEmpty()) {
-            Text("Connecting to chat…", color = Palette.Muted, fontSize = fontSize, modifier = Modifier.align(Alignment.Center))
+        val status = replayError ?: if (!connected && items.isEmpty() && controller.isLiveChat) "Connecting to chat…" else null
+        if (status != null && items.isEmpty()) {
+            Text(status, color = Palette.Muted, fontSize = fontSize, modifier = Modifier.align(Alignment.Center))
         }
     }
 }
 
 @Composable
-private fun ChatLine(message: ChatMessage, emotes: EmoteDirectory, badges: BadgeDirectory, fontSize: TextUnit) {
-    val built = remember(message, emotes, badges) { buildLine(message, emotes, badges) }
+private fun ChatLine(
+    message: ChatMessage,
+    deleted: Boolean,
+    emotes: EmoteDirectory,
+    badges: BadgeDirectory,
+    fontSize: TextUnit,
+    emoteLevel: Int,
+    timestamps: Boolean,
+) {
+    val built = remember(message, deleted, emotes, badges, emoteLevel, timestamps) {
+        buildLine(message, deleted, emotes, badges, emoteLevel, timestamps)
+    }
     Text(
         text = built.text,
         inlineContent = built.inline,
@@ -101,19 +126,36 @@ private fun ChatLine(message: ChatMessage, emotes: EmoteDirectory, badges: Badge
 
 private class BuiltLine(val text: AnnotatedString, val inline: Map<String, InlineTextContent>)
 
-private fun buildLine(message: ChatMessage, emotes: EmoteDirectory, badges: BadgeDirectory): BuiltLine {
+private fun timestampOf(message: ChatMessage): String? = when {
+    message.vodOffsetMs != null -> Format.clock(message.vodOffsetMs!! / 1000)
+    message.timestampMillis > 0 -> TIME_FORMAT.format(java.util.Date(message.timestampMillis))
+    else -> null
+}
+
+private fun buildLine(
+    message: ChatMessage,
+    deleted: Boolean,
+    emotes: EmoteDirectory,
+    badges: BadgeDirectory,
+    emoteLevel: Int,
+    timestamps: Boolean,
+): BuiltLine {
     val inline = HashMap<String, InlineTextContent>()
     val nameColor = message.colorHex?.let(::parseColor) ?: NAME_COLORS[(message.login.hashCode() and 0x7fffffff) % NAME_COLORS.size]
+    val size = emoteEm(emoteLevel).em
 
     fun image(id: String, url: String) {
         inline[id] = InlineTextContent(
-            Placeholder(width = 1.4.em, height = 1.4.em, placeholderVerticalAlign = PlaceholderVerticalAlign.Center),
+            Placeholder(width = size, height = size, placeholderVerticalAlign = PlaceholderVerticalAlign.Center),
         ) {
             AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         }
     }
 
     val text = buildAnnotatedString {
+        if (timestamps) {
+            timestampOf(message)?.let { withStyle(SpanStyle(color = Palette.Muted)) { append("$it ") } }
+        }
         message.badges.forEachIndexed { index, badge ->
             val url = badges.url(badge) ?: return@forEachIndexed
             val id = "b$index"
@@ -121,17 +163,23 @@ private fun buildLine(message: ChatMessage, emotes: EmoteDirectory, badges: Badg
             appendInlineContent(id, "[${badge.setId}]")
             append(' ')
         }
-        withStyle(SpanStyle(color = nameColor, fontWeight = FontWeight.Bold)) { append(message.displayName) }
-        append(if (message.isAction) " " else ": ")
-        val body = ChatFormatter.format(message, emotes)
-        val textStyle = if (message.isAction) SpanStyle(color = nameColor, fontStyle = FontStyle.Italic) else SpanStyle()
-        body.forEachIndexed { index, segment ->
-            when (segment) {
-                is ChatSegment.Text -> withStyle(textStyle) { append(segment.text) }
-                is ChatSegment.EmoteImage -> {
-                    val id = "e$index"
-                    image(id, segment.url)
-                    appendInlineContent(id, segment.name)
+        withStyle(SpanStyle(color = if (deleted) Palette.Muted else nameColor, fontWeight = FontWeight.Bold)) {
+            append(message.displayName)
+        }
+        append(if (message.isAction && !deleted) " " else ": ")
+        if (deleted) {
+            withStyle(SpanStyle(color = Palette.Muted, fontStyle = FontStyle.Italic)) { append("<message deleted>") }
+        } else {
+            val body = ChatFormatter.format(message, emotes)
+            val textStyle = if (message.isAction) SpanStyle(color = nameColor, fontStyle = FontStyle.Italic) else SpanStyle()
+            body.forEachIndexed { index, segment ->
+                when (segment) {
+                    is ChatSegment.Text -> withStyle(textStyle) { append(segment.text) }
+                    is ChatSegment.EmoteImage -> {
+                        val id = "e$index"
+                        image(id, segment.url)
+                        appendInlineContent(id, segment.name)
+                    }
                 }
             }
         }

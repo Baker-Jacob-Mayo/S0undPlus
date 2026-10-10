@@ -3,6 +3,7 @@ package com.s0undplus.tv.ui.nav
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import com.s0undplus.twitch.Stream
+import com.s0undplus.twitch.Video
 
 /** What the player should play. */
 sealed interface PlayTarget {
@@ -18,7 +19,10 @@ sealed interface PlayTarget {
         val id: String,
         val title: String,
         val channelName: String,
+        val channelLogin: String,
+        val channelUserId: String?,
         val durationSeconds: Long,
+        val thumbnailUrl: String = "",
     ) : PlayTarget
 }
 
@@ -28,6 +32,9 @@ sealed interface Route {
     data class Channel(val login: String) : Route
     data class Play(val target: PlayTarget) : Route
 }
+
+fun Video.toPlayTarget(): PlayTarget.Vod =
+    PlayTarget.Vod(id, title, userName, userLogin, userId, durationSeconds, thumbnail())
 
 fun Stream.toPlayTarget(): PlayTarget.Live =
     PlayTarget.Live(userLogin, userName, userId, title.ifBlank { null }, gameName.ifBlank { null })
@@ -48,5 +55,10 @@ class NavViewModel : ViewModel() {
 
     fun pop() {
         if (canPop) stack.removeAt(stack.lastIndex)
+    }
+
+    /** Swaps the top screen (switching stream from the player shouldn't leave the old stream on the back stack). */
+    fun replaceTop(route: Route) {
+        if (stack.isNotEmpty()) stack[stack.lastIndex] = route else stack.add(route)
     }
 }

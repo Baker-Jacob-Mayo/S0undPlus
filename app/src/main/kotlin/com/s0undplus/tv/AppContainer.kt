@@ -9,8 +9,11 @@ import com.s0undplus.twitch.auth.AuthSession
 import com.s0undplus.twitch.auth.TwitchAuth
 import com.s0undplus.twitch.chat.ChatClient
 import com.s0undplus.twitch.chat.RecentMessagesApi
+import com.s0undplus.twitch.chat.VodChatApi
 import com.s0undplus.twitch.chat.ThirdPartyEmotes
+import com.s0undplus.twitch.eventsub.RaidWatcher
 import com.s0undplus.twitch.playback.PlaybackApi
+import com.s0undplus.twitch.update.UpdateChecker
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +45,9 @@ class AppContainer(context: Context) {
     val chat = ChatClient(http, config)
     val emotes = ThirdPartyEmotes(http, config)
     val recentMessages = RecentMessagesApi(http, config)
+    val vodChat = VodChatApi(http, config)
+    val raids = RaidWatcher(http, config, session)
+    val updates = UpdateChecker(http, BuildConfig.UPDATE_REPO)
 
     /** Stable random id sent with playback-token requests (what the Twitch web player does per browser). */
     private fun deviceId(context: Context): String {

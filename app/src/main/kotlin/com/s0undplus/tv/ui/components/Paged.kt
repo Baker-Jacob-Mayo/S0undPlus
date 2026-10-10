@@ -187,5 +187,43 @@ private const val REFRESH_AGE_MS = 60_000L
 private const val LOAD_MORE_THRESHOLD = 8
 
 /** Invokes [onFocused] whenever this item (or a child) gains focus. */
-private fun Modifier.focusNotifier(onFocused: () -> Unit): Modifier =
+fun Modifier.focusNotifier(onFocused: () -> Unit): Modifier =
     this.onFocusChanged { if (it.hasFocus) onFocused() }
+
+/**
+ * Puts D-pad focus back on the card the viewer last had selected when a screen is re-entered (e.g. returning from the
+ * player). Create one per screen visit with the remembered key and apply [forItem] to every item.
+ */
+class FocusRestorer(private val key: Any?) {
+    private var done = key == null
+    private val requester = FocusRequester()
+
+    @Composable
+    fun forItem(itemKey: Any): Modifier {
+        val target = !done && itemKey == key
+        if (target) {
+            LaunchedEffect(Unit) {
+                try {
+                    requester.requestFocus()
+                } catch (_: IllegalStateException) {
+                    // item not attached yet; the viewer can simply navigate
+                }
+                done = true
+            }
+        }
+        return if (target) Modifier.focusRequester(requester) else Modifier
+    }
+}
+
+/** Scrolls-to-end detection shared by every infinite grid. */
+@Composable
+fun LoadMoreEffect(gridState: LazyGridState, enabled: Boolean = true, onLoadMore: () -> Unit) {
+    val nearEnd by remember(gridState) {
+        derivedStateOf {
+            val info = gridState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            last >= info.totalItemsCount - LOAD_MORE_THRESHOLD
+        }
+    }
+    LaunchedEffect(nearEnd, enabled) { if (nearEnd && enabled) onLoadMore() }
+}

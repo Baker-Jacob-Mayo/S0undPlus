@@ -110,6 +110,14 @@ class HelixApi(
             "after" to after,
         )
 
+    /** One video's metadata (for opening a VOD from a link), or null if it doesn't exist. */
+    suspend fun videoById(id: String): Video? =
+        try {
+            page("videos", Video.serializer(), "id" to id).items.firstOrNull()
+        } catch (e: TwitchApiException) {
+            if (e.status == 404) null else throw e
+        }
+
     /** Global chat badges plus [broadcasterId]'s custom ones (channel sets override global ones). */
     suspend fun badges(broadcasterId: String?): BadgeDirectory {
         val global = pageOf("chat/badges/global", BadgeSetDto.serializer(), emptyList()).items

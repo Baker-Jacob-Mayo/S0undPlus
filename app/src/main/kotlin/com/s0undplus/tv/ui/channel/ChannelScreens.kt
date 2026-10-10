@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -31,6 +34,7 @@ import com.s0undplus.tv.ui.components.MessageState
 import com.s0undplus.tv.ui.components.PagedGrid
 import com.s0undplus.tv.ui.components.PagedLoader
 import com.s0undplus.tv.ui.components.PillButton
+import com.s0undplus.tv.ui.components.QrDialog
 import com.s0undplus.tv.ui.components.StreamCard
 import com.s0undplus.tv.ui.components.VideoCard
 import com.s0undplus.tv.ui.components.describe
@@ -42,6 +46,7 @@ import com.s0undplus.tv.ui.util.rememberScreenScope
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
+import com.s0undplus.twitch.library.FavoriteChannel
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -119,39 +124,58 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
     val scope = rememberScreenScope()
     val controller = remember(login) { ChannelController(container, login, scope).also { it.load() } }
     val state by controller.state.collectAsStateWithLifecycle()
+    val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     val gridState = rememberLazyGridState()
+    var showFollowQr by remember { mutableStateOf(false) }
 
     when (val s = state) {
         ChannelState.Loading -> LoadingState()
         is ChannelState.Failed -> MessageState(s.message, actionLabel = "Try again", onAction = controller::load)
-        is ChannelState.Loaded -> Column(Modifier.fillMaxSize()) {
-            ChannelHeader(s.user, s.stream, onWatch = {
-                val target = s.stream?.toPlayTarget()
-                    ?: PlayTarget.Live(s.user.login, s.user.displayName, s.user.id)
-                onPlay(target)
-            })
-            Text(
-                "Past broadcasts",
-                style = MaterialTheme.typography.titleLarge,
-                color = Palette.OnBackground,
-                modifier = Modifier.padding(horizontal = 48.dp, vertical = 8.dp),
-            )
-            PagedGrid(
-                loader = controller.videos,
-                gridState = gridState,
-                emptyText = "${s.user.displayName} has no saved broadcasts.",
-                itemKey = { it.id },
-                modifier = Modifier.weight(1f),
-            ) { video, modifier ->
-                val settings = container.settings
-                val resume by produceState(0L, video.id) { value = settings.vodPosition(video.id) / 1000 }
-                VideoCard(
-                    video = video,
-                    resumeSeconds = resume,
-                    onClick = {
-                        onPlay(PlayTarget.Vod(video.id, video.title, video.userName, video.durationSeconds))
+        is ChannelState.Loaded -> Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                ChannelHeader(
+                    user = s.user,
+                    stream = s.stream,
+                    isFavorite = favorites.any { it.login.equals(s.user.login, ignoreCase = true) },
+                    onWatch = {
+                        val target = s.stream?.toPlayTarget() ?: PlayTarget.Live(s.user.login, s.user.displayName, s.user.id)
+                        onPlay(target)
                     },
-                    modifier = modifier,
+                    onFavorite = {
+                        scope.launch { container.settings.toggleFavorite(FavoriteChannel(s.user.login, s.user.displayName, s.user.id)) }
+                    },
+                    onFollowQr = { showFollowQr = true },
+                )
+                Text(
+                    "Past broadcasts",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Palette.OnBackground,
+                    modifier = Modifier.padding(horizontal = 48.dp, vertical = 8.dp),
+                )
+                PagedGrid(
+                    loader = controller.videos,
+                    gridState = gridState,
+                    emptyText = "${s.user.displayName} has no saved broadcasts.",
+                    itemKey = { it.id },
+                    modifier = Modifier.weight(1f),
+                ) { video, modifier ->
+                    val settings = container.settings
+                    val resume by produceState(0L, video.id) { value = settings.vodPosition(video.id) / 1000 }
+                    VideoCard(
+                        video = video,
+                        resumeSeconds = resume,
+                        onClick = { onPlay(video.toPlayTarget()) },
+                        modifier = modifier,
+                    )
+                }
+            }
+            if (showFollowQr) {
+                QrDialog(
+                    title = "Follow ${s.user.displayName}",
+                    subtitle = "Twitch doesn't let third-party apps follow channels. Scan to open the channel on your phone, " +
+                        "then tap Follow — it will show up in your Following tab.",
+                    url = "https://www.twitch.tv/${s.user.login}",
+                    onDismiss = { showFollowQr = false },
                 )
             }
         }
@@ -159,7 +183,14 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
 }
 
 @Composable
-private fun ChannelHeader(user: User, stream: Stream?, onWatch: () -> Unit) {
+private fun ChannelHeader(
+    user: User,
+    stream: Stream?,
+    isFavorite: Boolean,
+    onWatch: () -> Unit,
+    onFavorite: () -> Unit,
+    onFollowQr: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -192,6 +223,12 @@ private fun ChannelHeader(user: User, stream: Stream?, onWatch: () -> Unit) {
                 )
             }
         }
-        if (stream != null) PillButton("Watch live", onWatch)
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (stream != null) PillButton("Watch live", onWatch)
+                PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
+            }
+            PillButton("Follow on Twitch (QR)", onFollowQr)
+        }
     }
 }

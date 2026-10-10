@@ -123,6 +123,19 @@ class HelixApiTest {
     }
 
     @Test
+    fun videoByIdReturnsTheVideoOrNullWhenMissing() = runTest {
+        server.enqueue(
+            json(
+                """{"data":[{"id":"v9","user_id":"10","user_login":"alice","user_name":"Alice","title":"T","duration":"1m"}]}""",
+            ),
+        )
+        assertEquals("alice", helix.videoById("v9")?.userLogin)
+        assertEquals("v9", server.takeRequest().url.queryParameter("id"))
+        server.enqueue(json("""{"status":404,"message":"Not Found"}""", 404))
+        assertNull(helix.videoById("nope"))
+    }
+
+    @Test
     fun usersByIdChunksAtOneHundred() = runTest {
         val ids = (1..150).map { it.toString() }
         server.enqueue(json("""{"data":[]}"""))

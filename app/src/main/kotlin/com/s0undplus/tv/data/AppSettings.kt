@@ -10,10 +10,16 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.s0undplus.twitch.TwitchLanguages
 import com.s0undplus.twitch.auth.AuthTokens
 import com.s0undplus.twitch.auth.TokenStore
 import com.s0undplus.twitch.chat.ChatFilter
+import com.s0undplus.twitch.library.FavoriteChannel
+import com.s0undplus.twitch.library.HistoryEntry
+import com.s0undplus.twitch.library.LibraryOps
 import com.s0undplus.twitch.playback.QualityPreference
+import com.s0undplus.twitch.playback.RefreshMode
+import java.util.Locale
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -24,19 +30,59 @@ enum class ChatLayout(val label: String) {
     SIDE("Beside video"),
 }
 
+enum class AppTheme(val label: String) {
+    PURPLE("Purple"),
+    MIDNIGHT("Midnight blue"),
+    AMOLED("AMOLED black"),
+    CRIMSON("Crimson"),
+    FOREST("Forest"),
+}
+
+/** What to do with chat messages a moderator deleted. */
+enum class DeletedStyle(val label: String) {
+    HIDE("Hide"),
+    GREY("Grey out"),
+    SHOW("Show normally"),
+}
+
 /** Everything the viewer can tweak. Plain data so the UI can copy-and-save it. */
 data class AppSettings(
+    // Appearance
+    val theme: AppTheme = AppTheme.PURPLE,
+    val showClock: Boolean = false,
+    /** Broadcast language for the Language tab. */
+    val language: String = TwitchLanguages.defaultFor(Locale.getDefault().language),
+    // Chat
     val chatVisible: Boolean = true,
     val chatLayout: ChatLayout = ChatLayout.OVERLAY,
     /** 0 = small, 1 = medium, 2 = large. */
     val chatTextSize: Int = 1,
+    /** 0 = small, 1 = medium, 2 = large emotes. */
+    val emoteSize: Int = 1,
+    val chatTimestamps: Boolean = false,
+    val deletedStyle: DeletedStyle = DeletedStyle.GREY,
+    val showNotices: Boolean = true,
     val chatHistory: Boolean = true,
     val hideBots: Boolean = true,
     val hideCommands: Boolean = true,
     /** Comma- or newline-separated. */
     val blockedWords: String = "",
     val blockedUsers: String = "",
+    // Playback
     val quality: String = QualityPreference.AUTO,
+    val autoRefresh: Boolean = true,
+    val refreshMode: RefreshMode = RefreshMode.NORMAL,
+    val refreshAttempts: Int = 5,
+    val refreshIntervalSeconds: Int = 5,
+    val keepScreenOn: Boolean = true,
+    val gestures: Boolean = true,
+    val followRaids: Boolean = true,
+    val pipOnHome: Boolean = true,
+    val livePreviews: Boolean = false,
+    // Background / system
+    val goLiveNotifications: Boolean = false,
+    val homeChannel: Boolean = false,
+    val autoUpdateCheck: Boolean = true,
 ) {
     val chatFilter: ChatFilter
         get() = ChatFilter(
@@ -52,19 +98,42 @@ data class AppSettings(
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "s0undplus")
 
-/** DataStore-backed settings, login tokens and per-VOD resume points. */
+/** DataStore-backed settings, login tokens, favorites, watch history and per-VOD resume points. */
 class SettingsRepository(private val context: Context) {
     private object Keys {
         val tokens = stringPreferencesKey("auth_tokens")
+        val favorites = stringPreferencesKey("favorites")
+        val history = stringPreferencesKey("history")
+        val lastLive = stringPreferencesKey("last_live_logins")
+
+        val theme = stringPreferencesKey("theme")
+        val showClock = booleanPreferencesKey("show_clock")
+        val language = stringPreferencesKey("language")
         val chatVisible = booleanPreferencesKey("chat_visible")
         val chatLayout = stringPreferencesKey("chat_layout")
         val chatTextSize = intPreferencesKey("chat_text_size")
+        val emoteSize = intPreferencesKey("emote_size")
+        val chatTimestamps = booleanPreferencesKey("chat_timestamps")
+        val deletedStyle = stringPreferencesKey("deleted_style")
+        val showNotices = booleanPreferencesKey("show_notices")
         val chatHistory = booleanPreferencesKey("chat_history")
         val hideBots = booleanPreferencesKey("hide_bots")
         val hideCommands = booleanPreferencesKey("hide_commands")
         val blockedWords = stringPreferencesKey("blocked_words")
         val blockedUsers = stringPreferencesKey("blocked_users")
         val quality = stringPreferencesKey("quality")
+        val autoRefresh = booleanPreferencesKey("auto_refresh")
+        val refreshMode = stringPreferencesKey("refresh_mode")
+        val refreshAttempts = intPreferencesKey("refresh_attempts")
+        val refreshInterval = intPreferencesKey("refresh_interval")
+        val keepScreenOn = booleanPreferencesKey("keep_screen_on")
+        val gestures = booleanPreferencesKey("gestures")
+        val followRaids = booleanPreferencesKey("follow_raids")
+        val pipOnHome = booleanPreferencesKey("pip_on_home")
+        val livePreviews = booleanPreferencesKey("live_previews")
+        val goLive = booleanPreferencesKey("go_live_notifications")
+        val homeChannel = booleanPreferencesKey("home_channel")
+        val autoUpdate = booleanPreferencesKey("auto_update_check")
 
         fun vod(id: String) = longPreferencesKey("vod_$id")
     }
@@ -74,6 +143,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         context.dataStore.edit { prefs -> prefs.write(transform(prefs.toSettings())) }
     }
+
+    // --- login ---
 
     /** Login tokens live in app-private storage (backups are disabled in the manifest). */
     val tokenStore: TokenStore = object : TokenStore {
@@ -97,6 +168,47 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    // --- favorites & history ---
+
+    val favorites: Flow<List<FavoriteChannel>> =
+        context.dataStore.data.map { LibraryOps.decodeFavorites(it[Keys.favorites]) }
+
+    val history: Flow<List<HistoryEntry>> =
+        context.dataStore.data.map { LibraryOps.decodeHistory(it[Keys.history]) }
+
+    suspend fun toggleFavorite(channel: FavoriteChannel) {
+        context.dataStore.edit { prefs ->
+            val updated = LibraryOps.toggleFavorite(LibraryOps.decodeFavorites(prefs[Keys.favorites]), channel)
+            prefs[Keys.favorites] = LibraryOps.encodeFavorites(updated)
+        }
+    }
+
+    suspend fun recordHistory(entry: HistoryEntry) {
+        context.dataStore.edit { prefs ->
+            val updated = LibraryOps.record(LibraryOps.decodeHistory(prefs[Keys.history]), entry)
+            prefs[Keys.history] = LibraryOps.encodeHistory(updated)
+        }
+    }
+
+    suspend fun removeHistory(videoId: String) {
+        context.dataStore.edit { prefs ->
+            val updated = LibraryOps.remove(LibraryOps.decodeHistory(prefs[Keys.history]), videoId)
+            prefs[Keys.history] = LibraryOps.encodeHistory(updated)
+        }
+    }
+
+    // --- go-live notification bookkeeping ---
+
+    /** Logins that were live at the last background check, or null if there has been no check yet. */
+    suspend fun lastLiveLogins(): Set<String>? =
+        context.dataStore.data.first()[Keys.lastLive]?.split(',')?.filter { it.isNotEmpty() }?.toSet()
+
+    suspend fun saveLastLiveLogins(logins: Set<String>) {
+        context.dataStore.edit { it[Keys.lastLive] = logins.joinToString(",") }
+    }
+
+    // --- VOD resume ---
+
     suspend fun vodPosition(videoId: String): Long = context.dataStore.data.first()[Keys.vod(videoId)] ?: 0L
 
     /** Stores the resume point, or forgets it when the viewer is at the very start or has basically finished. */
@@ -114,30 +226,70 @@ class SettingsRepository(private val context: Context) {
     private fun Preferences.toSettings(): AppSettings {
         val d = AppSettings()
         return AppSettings(
+            theme = enumOf(this[Keys.theme], d.theme),
+            showClock = this[Keys.showClock] ?: d.showClock,
+            language = this[Keys.language] ?: d.language,
             chatVisible = this[Keys.chatVisible] ?: d.chatVisible,
-            chatLayout = this[Keys.chatLayout]?.let { name -> ChatLayout.entries.firstOrNull { it.name == name } }
-                ?: d.chatLayout,
+            chatLayout = enumOf(this[Keys.chatLayout], d.chatLayout),
             chatTextSize = (this[Keys.chatTextSize] ?: d.chatTextSize).coerceIn(0, 2),
+            emoteSize = (this[Keys.emoteSize] ?: d.emoteSize).coerceIn(0, 2),
+            chatTimestamps = this[Keys.chatTimestamps] ?: d.chatTimestamps,
+            deletedStyle = enumOf(this[Keys.deletedStyle], d.deletedStyle),
+            showNotices = this[Keys.showNotices] ?: d.showNotices,
             chatHistory = this[Keys.chatHistory] ?: d.chatHistory,
             hideBots = this[Keys.hideBots] ?: d.hideBots,
             hideCommands = this[Keys.hideCommands] ?: d.hideCommands,
             blockedWords = this[Keys.blockedWords] ?: d.blockedWords,
             blockedUsers = this[Keys.blockedUsers] ?: d.blockedUsers,
             quality = this[Keys.quality] ?: d.quality,
+            autoRefresh = this[Keys.autoRefresh] ?: d.autoRefresh,
+            refreshMode = enumOf(this[Keys.refreshMode], d.refreshMode),
+            refreshAttempts = (this[Keys.refreshAttempts] ?: d.refreshAttempts).coerceIn(1, 20),
+            refreshIntervalSeconds = (this[Keys.refreshInterval] ?: d.refreshIntervalSeconds).coerceIn(1, 60),
+            keepScreenOn = this[Keys.keepScreenOn] ?: d.keepScreenOn,
+            gestures = this[Keys.gestures] ?: d.gestures,
+            followRaids = this[Keys.followRaids] ?: d.followRaids,
+            pipOnHome = this[Keys.pipOnHome] ?: d.pipOnHome,
+            livePreviews = this[Keys.livePreviews] ?: d.livePreviews,
+            goLiveNotifications = this[Keys.goLive] ?: d.goLiveNotifications,
+            homeChannel = this[Keys.homeChannel] ?: d.homeChannel,
+            autoUpdateCheck = this[Keys.autoUpdate] ?: d.autoUpdateCheck,
         )
     }
 
     private fun MutablePreferences.write(s: AppSettings) {
+        this[Keys.theme] = s.theme.name
+        this[Keys.showClock] = s.showClock
+        this[Keys.language] = s.language
         this[Keys.chatVisible] = s.chatVisible
         this[Keys.chatLayout] = s.chatLayout.name
         this[Keys.chatTextSize] = s.chatTextSize
+        this[Keys.emoteSize] = s.emoteSize
+        this[Keys.chatTimestamps] = s.chatTimestamps
+        this[Keys.deletedStyle] = s.deletedStyle.name
+        this[Keys.showNotices] = s.showNotices
         this[Keys.chatHistory] = s.chatHistory
         this[Keys.hideBots] = s.hideBots
         this[Keys.hideCommands] = s.hideCommands
         this[Keys.blockedWords] = s.blockedWords
         this[Keys.blockedUsers] = s.blockedUsers
         this[Keys.quality] = s.quality
+        this[Keys.autoRefresh] = s.autoRefresh
+        this[Keys.refreshMode] = s.refreshMode.name
+        this[Keys.refreshAttempts] = s.refreshAttempts
+        this[Keys.refreshInterval] = s.refreshIntervalSeconds
+        this[Keys.keepScreenOn] = s.keepScreenOn
+        this[Keys.gestures] = s.gestures
+        this[Keys.followRaids] = s.followRaids
+        this[Keys.pipOnHome] = s.pipOnHome
+        this[Keys.livePreviews] = s.livePreviews
+        this[Keys.goLive] = s.goLiveNotifications
+        this[Keys.homeChannel] = s.homeChannel
+        this[Keys.autoUpdate] = s.autoUpdateCheck
     }
+
+    private inline fun <reified E : Enum<E>> enumOf(name: String?, default: E): E =
+        enumValues<E>().firstOrNull { it.name == name } ?: default
 
     private companion object {
         const val MIN_RESUME_MS = 15_000L

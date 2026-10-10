@@ -1,12 +1,15 @@
 package com.s0undplus.tv
 
+import android.Manifest
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,20 +17,35 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
+import com.s0undplus.tv.background.LiveCheckScheduler
+import com.s0undplus.tv.background.Notifier
+import com.s0undplus.tv.background.TvChannels
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.theme.S0undPlusTheme
+import com.s0undplus.twitch.DeepLinkParser
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
     private val bridge = ActivityBridge()
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* the worker re-checks on each run */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as S0undPlusApp).container
 
+        // Apply the saved theme before the first frame so a non-default theme doesn't flash purple.
+        Palette.apply(runBlocking { container.settings.settings.first().theme })
+
         bridge.pipSupported = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         bridge.enterPip = ::enterPip
         addOnPictureInPictureModeChangedListener { info -> bridge.inPip = info.isInPictureInPictureMode }
+        handleLink(intent)
 
         setContent {
             CompositionLocalProvider(LocalAppContainer provides container, LocalActivityBridge provides bridge) {
@@ -49,6 +67,49 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // Settings drive the theme and the background checks.
+        lifecycleScope.launch {
+            container.settings.settings.collect { s ->
+                Palette.apply(s.theme)
+                LiveCheckScheduler.sync(applicationContext, s)
+            }
+        }
+        lifecycleScope.launch {
+            var first = true
+            container.settings.settings.map { it.goLiveNotifications }.distinctUntilChanged().collect { on ->
+                if (on && !first) {
+                    if (!Notifier.hasPermission(this@MainActivity)) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    LiveCheckScheduler.sync(applicationContext, container.settings.settings.first(), runNow = true)
+                }
+                first = false
+            }
+        }
+        lifecycleScope.launch {
+            var first = true
+            container.settings.settings.map { it.homeChannel }.distinctUntilChanged().collect { on ->
+                when {
+                    on && first -> TvChannels.ensure(applicationContext)
+                    on -> {
+                        TvChannels.requestBrowsable(this@MainActivity)
+                        LiveCheckScheduler.sync(applicationContext, container.settings.settings.first(), runNow = true)
+                    }
+                    !first -> TvChannels.remove(applicationContext)
+                }
+                first = false
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLink(intent)
+    }
+
+    private fun handleLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        DeepLinkParser.parse(uri.scheme, uri.host, uri.pathSegments)?.let { bridge.pendingLink = it }
     }
 
     /** Android 11 and below have no auto-enter, so Home ("user leave hint") has to trigger PiP by hand. */

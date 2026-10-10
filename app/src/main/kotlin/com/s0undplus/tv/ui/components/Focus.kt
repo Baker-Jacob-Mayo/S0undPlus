@@ -3,7 +3,8 @@ package com.s0undplus.tv.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,8 +24,10 @@ import com.s0undplus.tv.ui.theme.Palette
 
 /**
  * The one clickable building block for the whole app: focusable with the remote, scales up and gets a brand-colored
- * ring when focused, and activates on the center/enter button. [content] receives the current focus state.
+ * ring when focused, and activates on the center/enter button (or [onLongClick] on a long press). [content] receives
+ * the current focus state.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FocusSurface(
     onClick: () -> Unit,
@@ -34,6 +37,7 @@ fun FocusSurface(
     focusedContainer: Color = Palette.SurfaceFocused,
     focusedScale: Float = 1.05f,
     onFocused: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -51,7 +55,7 @@ fun FocusSurface(
             .clip(shape)
             .background(if (focused) focusedContainer else container)
             .border(3.dp, if (focused) Palette.Brand else Color.Transparent, shape)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         content(focused)
     }

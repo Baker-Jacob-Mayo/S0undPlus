@@ -34,6 +34,7 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.ui.components.PillButton
+import com.s0undplus.tv.ui.components.QrImage
 import com.s0undplus.tv.ui.components.Spinner
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.twitch.TwitchScopes
@@ -113,13 +114,7 @@ fun LoginScreen() {
 
 @Composable
 private fun CodePanel(code: DeviceCode) {
-    val qr = remember(code.verificationUri) { qrBitmap(code.verificationUri) }
-    Image(
-        bitmap = qr,
-        contentDescription = "QR code to sign in",
-        filterQuality = FilterQuality.None,
-        modifier = Modifier.size(260.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(10.dp),
-    )
+    QrImage(code.verificationUri)
     Text(
         code.userCode,
         fontSize = 56.sp,
@@ -130,12 +125,4 @@ private fun CodePanel(code: DeviceCode) {
     )
     Text("twitch.tv/activate", style = MaterialTheme.typography.titleMedium, color = Palette.BrandSoft)
     Text("Waiting for you to approve…", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
-}
-
-private fun qrBitmap(content: String, size: Int = 512): ImageBitmap {
-    val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size, mapOf(EncodeHintType.MARGIN to 0))
-    val pixels = IntArray(size * size) { i ->
-        if (matrix[i % size, i / size]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
-    }
-    return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888).asImageBitmap()
 }

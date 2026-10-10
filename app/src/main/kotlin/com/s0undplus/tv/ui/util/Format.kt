@@ -43,6 +43,9 @@ object Format {
         }
     }
 
+    /** Like [ago] but for an epoch-millis timestamp. */
+    fun agoMillis(epochMillis: Long, now: Instant = Instant.now()): String = ago(Instant.ofEpochMilli(epochMillis).toString(), now)
+
     private fun parse(iso: String): Instant? = try {
         Instant.parse(iso)
     } catch (_: DateTimeParseException) {

@@ -97,6 +97,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.tvprovider)
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.androidx.media3.exoplayer)

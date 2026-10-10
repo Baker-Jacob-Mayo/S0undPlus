@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -29,6 +30,7 @@ import com.s0undplus.twitch.Category
 import com.s0undplus.twitch.ChannelResult
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.Video
+import com.s0undplus.twitch.library.HistoryEntry
 
 @Composable
 private fun Chip(text: String, background: Color, modifier: Modifier = Modifier) {
@@ -76,8 +78,15 @@ private fun CardText(primary: String, secondary: String?, tertiary: String? = nu
 }
 
 @Composable
-fun StreamCard(stream: Stream, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    FocusSurface(onClick, modifier) {
+fun StreamCard(
+    stream: Stream,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    preview: PreviewController? = null,
+    isFavorite: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+) {
+    FocusSurface(onClick, modifier, onLongClick = onLongClick) { focused ->
         Column {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
                 AsyncImage(
@@ -86,7 +95,9 @@ fun StreamCard(stream: Stream, onClick: () -> Unit, modifier: Modifier = Modifie
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (focused && preview != null) PreviewLayer(preview, stream.userLogin)
                 Chip("LIVE", Palette.Live, Modifier.align(Alignment.TopStart).padding(8.dp))
+                if (isFavorite) Chip("★", Palette.Brand, Modifier.align(Alignment.TopEnd).padding(8.dp))
                 Row(Modifier.align(Alignment.BottomStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Chip("${Format.count(stream.viewerCount)} viewers", Color(0xCC000000))
                     Format.uptime(stream.startedAt)?.let { Chip(it, Color(0xCC000000)) }
@@ -159,6 +170,37 @@ fun VideoCard(video: Video, resumeSeconds: Long?, onClick: () -> Unit, modifier:
                 }
             }
             CardText(video.title, "${Format.count(video.viewCount)} views", Format.ago(video.createdAt))
+        }
+    }
+}
+
+/** A past broadcast the viewer was watching, with a progress bar showing how far they got. */
+@Composable
+fun HistoryCard(entry: HistoryEntry, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+    FocusSurface(onClick, modifier, onLongClick = onLongClick) {
+        Column {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                AsyncImage(
+                    model = entry.thumbnailUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                val fraction = if (entry.durationSeconds > 0) {
+                    (entry.positionMs / 1000f / entry.durationSeconds).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(5.dp).background(Color(0x66000000))) {
+                    Box(Modifier.fillMaxWidth(fraction).height(5.dp).background(Palette.Brand))
+                }
+                Chip(
+                    "${Format.clock(entry.positionMs / 1000)} / ${Format.clock(entry.durationSeconds)}",
+                    Color(0xCC000000),
+                    Modifier.align(Alignment.TopEnd).padding(8.dp),
+                )
+            }
+            CardText(entry.title, entry.channelName, Format.agoMillis(entry.watchedAtMillis))
         }
     }
 }
