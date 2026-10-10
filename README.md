@@ -41,6 +41,7 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | **Live previews** | Optional (off by default): a focused card plays a muted, lowest-quality preview using one shared player. |
 | **Go-live notifications** | Optional: checks about every 15 minutes and notifies when a followed channel goes live. Optional Android TV home-screen "Live now" row. |
 | **Themes & extras** | 5 themes, optional world clock, keep-screen-on setting, remote colour-button / channel +/- shortcuts, deep links (`twitch.tv/<login>`, `s0undplus://live/<login>`). |
+| **Ad handling** | **Off by default.** Settings → Ads: hide ads, or get an ad-free copy through proxy URLs, an HTTP proxy, or a different token identity — the same approaches Xtra uses. Read [Ads](#ads) before turning it on. |
 | **Updates** | In-app updater that checks GitHub Releases and verifies the APK is signed with the same key before installing. |
 
 ### What's different from S0undTV
@@ -137,7 +138,9 @@ adb install -r S0undPlus-release.apk
 twitch-core/   Plain Kotlin/JVM library (included build) — all Twitch protocol logic, fully unit tested
   api/         HelixApi: streams, follows, categories, search, users, videos, badges
   auth/        Device-code OAuth + AuthSession (serialized refresh, retry-on-401)
-  playback/    PlaybackApi (token → usher → master playlist), MasterPlaylist parser, QualityPreference
+  playback/    PlaybackApi (token → usher → master playlist), MasterPlaylist parser, QualityPreference,
+               AdBreak (ad-marker detector, break-timing planner, media-playlist parser), Proxy (routes, host-routed
+               HTTP proxy, custom-URL templating, health check, Xtra's default lists)
   chat/        IRC parser + ChatProtocol, ChatClient (anonymous WebSocket + backoff),
                7TV/BTTV/FFZ emotes, ChatFormatter, ChatFilter, recent-messages history,
                VOD chat API + VodChatReplay (seek-aware buffering)
@@ -171,10 +174,57 @@ GraphQL endpoint and then fetches the HLS playlist from `usher.ttvnw.net`. Pleas
   [`PlaybackApi.kt`](twitch-core/src/main/kotlin/com/s0undplus/twitch/playback/PlaybackApi.kt) so a fix is one file.
 - It uses the public web-player client ID (`TwitchConfig.webClientId`), not yours. Your own client ID is used only for
   Helix and login.
-- Playback is anonymous: **no Turbo or subscriber perks**, and ads that Twitch stitches into the stream play as they
-  do on the website. There is no ad-blocking.
+- Playback is anonymous: **no Turbo or subscriber perks**. By default, ads that Twitch stitches into the stream play as
+  they do on the website; see [Ads](#ads) for the optional, opt-in handling.
 - Using unofficial endpoints may be against Twitch's Terms of Service. This project is for personal use; use it at
   your own risk.
+
+## Ads
+
+**How Xtra is "ad-free on everything".** It doesn't strip ads out of the stream. Twitch stitches ads into the video
+itself, so there is nothing to strip. What Xtra does instead (read from its source, `MainViewModel`, `ExoPlayerService`
+and `PlayerRepository`):
+
+1. **Custom proxy URLs — on by default in Xtra.** Every live stream is requested from a list of third-party proxy
+   services (`eu.luminous.dev/live/$channel`, `lb-eu.cdn-perfprod.com/live/$channel`, …) instead of from Twitch. Those
+   services fetch the stream from somewhere ads aren't served and hand back a playlist without them. If one fails
+   (HTTP error or timeout) Xtra moves to the next, and finally to Twitch directly.
+2. **HTTP proxy**, 3. **video swap** (ask Twitch for the stream with a different player identity), and 4. **hide ads**
+   (mute and black out): all of which watch the playlist for Twitch's ad markers and only step in while an ad plays.
+
+So "ad-free everywhere" means "a proxy service somebody else runs happens to be working today".
+
+**What S0undPlus does.** Settings → **Ads** → **Ad handling**:
+
+| Mode | What happens |
+|---|---|
+| **Off** *(default)* | Exactly the app as before. Nothing extra is requested; nothing goes to anyone but Twitch. |
+| **Hide ads** | Reads Twitch's ad markers, mutes and blacks out the picture for the length of the ad. You still wait it out. Nothing goes to anyone but Twitch. |
+| **Ad-free copy via proxy URLs** | Plays the whole stream from the proxy list (Xtra's approach 1), a few entries per attempt, falling back to Twitch. No Twitch token is created or sent to the proxy. If it ends up on a direct stream it falls back to hiding ads. |
+| **Ad-free copy via HTTP proxy** | While an ad plays, the stream's playlists are fetched through your HTTP proxy (token / master / media-playlist requests individually switchable; segments always go direct). |
+| **Ad-free copy via video swap** | While an ad plays, re-requests the stream with a different token identity (`platform` / `playerType`) and shows that. |
+
+Details worth knowing:
+
+- **The default lists are copied from Xtra** (12 proxy URLs, 9 enabled as in Xtra; one HTTP proxy,
+  `firefox.api.cdn-perfprod.com:2023`; three video-swap identities) as they are in its source today. They are run by
+  third parties, not by this project, and can vanish or change any time — several were already shown offline or
+  "loading" in a screenshot of Xtra's own list. **Check which are online** in the settings pings each one's `/ping`
+  endpoint the way Xtra does. Add, remove or reset entries there; first entry is tried first.
+- **Privacy.** A proxy service sees your IP address and which channel you watch for as long as you use it. This is the
+  real cost of proxy modes, and why they are opt-in.
+- **Terms and the streamer.** Getting around ads may go against Twitch's Terms of Service, and ad revenue is a large part
+  of how streamers get paid. **Twitch Turbo or subscribing to a channel removes ads without any of this.**
+- The "Playback token player type" setting changes which player identity the token request claims. Whether that changes
+  what Twitch serves is up to Twitch and changes over time.
+- Ad detection uses Twitch's own markers (segment titles `Amazon`/`Adform`/`DCM`, `stitched-ad` date ranges). If Twitch
+  changes them detection silently stops and the stream just plays normally.
+- Proxy URLs must be `https` and contain `$channel`. A proxy that doesn't answer within 8 seconds is skipped, and each
+  load tries at most three before falling back to Twitch, so a dead list can't hold the player up for long.
+
+**Not verified:** the ad logic has been unit-tested (parsers, detector, break timing, routing, proxy auth, failover,
+timeouts), but the playlist fixtures are **synthetic, written from Xtra's rules**, not captured from a real ad break,
+and **nothing has been tried against real Twitch ads, a real proxy service, or on a TV.** CI proves it compiles.
 
 Chat uses Twitch's documented anonymous IRC gateway. Chat history comes from the community-run
 [recent-messages](https://recent-messages.robotty.de) service; emotes from the public 7TV/BTTV/FFZ APIs. All three
@@ -184,10 +234,10 @@ are best-effort and optional.
 
 What has and hasn't been verified:
 
-- ✅ `twitch-core`: **85 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
+- ✅ `twitch-core`: **146 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
   refresh, device-code polling, playlist/IRC/emote parsing, a real WebSocket round-trip with reconnect, an EventSub
   WebSocket flow (welcome → subscribe → raid), VOD chat parsing and replay across seeks, auto-refresh rules, version
-  comparison, favorites/history bounds, deep-link parsing.
+  comparison, favorites/history bounds, deep-link parsing, and the ad-handling logic described under [Ads](#ads).
 - ✅ The Android app **compiles and packages** on GitHub Actions (AGP 9.4, Gradle 9.6, Kotlin 2.4, `compileSdk` 37);
   Android lint reports **0 errors**; CI inspects the built APK with `aapt2` and `apksigner` (Leanback launcher, banner,
   permissions, `uses-feature`, signer).
@@ -197,6 +247,10 @@ What has and hasn't been verified:
   VOD-chat response parser, the emote parsers, and EventSub (the exact welcome payload and auth requirements for
   `channel.raid` were not confirmed against Twitch's own docs). D-pad focus behaviour, playback performance,
   notifications, the TV home row, PiP and the installer flow on real TV hardware are untested.
+- ⚠️ **Ad handling has never met a real ad.** Its tests use synthetic playlists written from Xtra's rules; nothing has been
+  run against Twitch's actual ad breaks, a live proxy service or a TV, so whether the markers still look like that, and
+  whether any of the default proxies still work, is unknown. The player-side swap and hide logic (`AdBlocker`) is covered
+  by compilation and the core tests of the pieces it uses, not by an end-to-end test.
 - ⚠️ The **release workflow has never run** (it needs your signing secrets), and the **in-app updater has never installed
   anything**.
 - ⚠️ VOD chat replay and playback use **undocumented Twitch endpoints** that can change without notice; both degrade
