@@ -1,6 +1,7 @@
 package com.s0undplus.tv.background
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
@@ -155,6 +156,9 @@ object TvChannels {
         }
     }
 
+    // Lint reports RestrictedApi for PreviewProgram.Builder's generic setters. It is a false positive: this exact
+    // builder chain is the one documented for the TV provider, and the methods are public API.
+    @SuppressLint("RestrictedApi")
     fun publish(context: Context, streams: List<Stream>) {
         val id = ensureChannel(context) ?: return
         try {

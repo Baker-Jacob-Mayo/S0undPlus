@@ -79,7 +79,7 @@ jobs:
             done
             APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
             echo "--- signer ---"
-            "$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep -E "Signer #1 certificate (DN|SHA-256)" || true
+            "$APKSIGNER" verify --print-certs "$APK" 2>&1 | head -6 || true
             AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
             echo "--- aapt2 badging (manifest as packaged) ---"
             "$AAPT2" dump badging "$APK" | grep -E "^[[:space:]]*(package|sdkVersion|minSdkVersion|targetSdkVersion|uses-feature|uses-feature-not-required|uses-implied-feature|feature-group|leanback-launchable-activity|launchable-activity|application:|application-banner|banner|uses-permission)" || true
