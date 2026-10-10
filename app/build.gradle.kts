@@ -75,6 +75,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
 
     implementation(libs.coil.compose)
+    implementation(libs.coil.gif)
     implementation(libs.coil.network.okhttp)
     implementation(libs.zxing.core)
 }

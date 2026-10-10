@@ -39,8 +39,8 @@ class EmoteDirectory(private val byName: Map<String, Emote>) {
     }
 }
 
-/** URL for a Twitch-native emote id (static, dark-theme variant, 2x). */
-fun twitchEmoteUrl(id: String): String = "https://static-cdn.jtvnw.net/emoticons/v2/$id/default/dark/2.0"
+/** URL for a Twitch-native emote id (static frame, dark-theme variant, 2x: cheap to decode on a TV). */
+fun twitchEmoteUrl(id: String): String = "https://static-cdn.jtvnw.net/emoticons/v2/$id/static/dark/2.0"
 
 /**
  * Third-party emote sets (7TV, BetterTTV, FrankerFaceZ). Every provider is best-effort and independent: if one is
