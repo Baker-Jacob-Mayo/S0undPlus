@@ -2,6 +2,8 @@ name: Build
 
 on:
   push:
+    # Not tags: a v* tag is built (and signed) by release.yml, so building it here too would run everything twice.
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
