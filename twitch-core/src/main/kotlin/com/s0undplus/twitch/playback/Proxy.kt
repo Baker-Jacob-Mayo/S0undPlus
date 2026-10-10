@@ -213,6 +213,46 @@ object ProxyDefaults {
     )
 }
 
+/**
+ * Stores the editable lists as plain text, one entry per line, a leading `#` marking an entry that is switched off.
+ * Lines that are not usable are dropped on read, so a hand-edited or corrupted value can't poison playback.
+ */
+object ProxyEntryCodec {
+    fun encode(entries: List<ProxyEntry>): String =
+        entries.joinToString("\n") { (if (it.enabled) "" else "#") + it.template }
+
+    fun decode(raw: String): List<ProxyEntry> =
+        raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                val template = line.removePrefix("#").trim()
+                if (ProxyUrls.isUsable(template)) ProxyEntry(template, enabled = !line.startsWith("#")) else null
+            }
+            .distinctBy { it.template }
+            .toList()
+
+    fun encodeSwap(entries: List<VideoSwapEntry>): String =
+        entries.joinToString("\n") { (if (it.enabled) "" else "#") + "${it.platform}/${it.playerType}" }
+
+    fun decodeSwap(raw: String): List<VideoSwapEntry> =
+        raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                val body = line.removePrefix("#").trim()
+                val platform = body.substringBefore('/', "")
+                val playerType = body.substringAfter('/', "")
+                if (platform in PlayerTypes.PLATFORMS && playerType in PlayerTypes.ALL) {
+                    VideoSwapEntry(platform, playerType, enabled = !line.startsWith("#"))
+                } else {
+                    null
+                }
+            }
+            .distinct()
+            .toList()
+}
+
 /** Asks a custom proxy whether it is alive, the way Xtra's proxy list shows "Online" / "Offline". */
 object ProxyHealth {
     private const val TIMEOUT_SECONDS = 6L

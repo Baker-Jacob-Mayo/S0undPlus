@@ -79,6 +79,63 @@ object AdBreakDetector {
 }
 
 /**
+ * Reads the text of a live *media* playlist (the per-quality one, not the master) into the [MediaPlaylistView] the
+ * detector needs. Polling the playlist ourselves — rather than reaching into the player's parsed copy — means the same
+ * check also works while the player is busy with a different stream.
+ */
+object MediaPlaylistParser {
+    /** Null when the text has no segments at all (an empty or error body). */
+    fun view(text: String): MediaPlaylistView? {
+        val tags = ArrayList<String>()
+        var pendingStartMs: Long? = null
+        var cursorMs: Long? = null
+        var durationMs = 0L
+        var title: String? = null
+        var sawSegment = false
+        var haveInfo = false
+        var newestTitle: String? = null
+        var newestStart: Long? = null
+        var newestEnd: Long? = null
+
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            when {
+                line.isEmpty() -> Unit
+                line.startsWith("#EXT-X-PROGRAM-DATE-TIME:") -> {
+                    tags += line
+                    pendingStartMs = AdBreakDetector.parseDate(line.substringAfter(':').trim())
+                }
+                line.startsWith("#EXTINF:") -> {
+                    tags += line
+                    val body = line.substringAfter(':')
+                    durationMs = ((body.substringBefore(',').trim().toDoubleOrNull() ?: 0.0) * 1000).toLong()
+                    title = if (',' in body) body.substringAfter(',').trim() else null
+                    haveInfo = true
+                }
+                line.startsWith("#EXT") -> tags += line
+                line.startsWith("#") -> Unit
+                // A segment URI only counts right after its #EXTINF; anything else (e.g. a JSON error body) is noise.
+                !haveInfo -> Unit
+                else -> {
+                    haveInfo = false
+                    sawSegment = true
+                    val start = pendingStartMs ?: cursorMs
+                    val end = start?.plus(durationMs)
+                    newestTitle = title
+                    newestStart = start
+                    newestEnd = end
+                    cursorMs = end
+                    pendingStartMs = null
+                    title = null
+                    durationMs = 0
+                }
+            }
+        }
+        return if (sawSegment) MediaPlaylistView(tags, newestTitle, newestStart, newestEnd) else null
+    }
+}
+
+/**
  * Turns "is there an ad at the live edge right now?" observations into *when the viewer's own position* enters and
  * leaves the ad. The player plays [liveOffsetMs] behind the newest segment, so an ad seen at the edge reaches the
  * viewer that much later; muting or swapping at the moment of detection would silence the end of the previous

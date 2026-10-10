@@ -78,6 +78,32 @@ class ProxyUrlsTest {
     }
 }
 
+class ProxyEntryCodecTest {
+    @Test
+    fun defaultsSurviveAnEncodeDecodeRoundTripWithTheirEnabledFlags() {
+        val decoded = ProxyEntryCodec.decode(ProxyEntryCodec.encode(ProxyDefaults.customProxies))
+        assertEquals(ProxyDefaults.customProxies, decoded)
+        assertEquals(ProxyDefaults.videoSwap, ProxyEntryCodec.decodeSwap(ProxyEntryCodec.encodeSwap(ProxyDefaults.videoSwap)))
+    }
+
+    @Test
+    fun junkLinesAreDroppedAndDuplicatesCollapsed() {
+        val raw = "#a.example/live/\$channel\n\n  b.example/live/\$channel  \nhttp://c.example/\$channel\nno-channel.example\nb.example/live/\$channel"
+        assertEquals(
+            listOf(ProxyEntry("a.example/live/\$channel", false), ProxyEntry("b.example/live/\$channel", true)),
+            ProxyEntryCodec.decode(raw),
+        )
+    }
+
+    @Test
+    fun swapEntriesAreValidatedAgainstKnownPlatformsAndPlayerTypes() {
+        assertEquals(
+            listOf(VideoSwapEntry("web", "embed", false), VideoSwapEntry("android", "autoplay", true)),
+            ProxyEntryCodec.decodeSwap("#web/embed\nandroid/autoplay\nweb/nonsense\nplatform/embed\nweb\n"),
+        )
+    }
+}
+
 class ProxyRoutingTest {
     private val routing = ProxyRouting.TWITCH
     private fun proxy(token: Boolean = false, multi: Boolean = false, media: Boolean = false) =

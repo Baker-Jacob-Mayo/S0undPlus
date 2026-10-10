@@ -243,3 +243,82 @@ class AdBreakPlannerTest {
         assertFalse(planner.isActive)
     }
 }
+
+class MediaPlaylistParserTest {
+    private fun playlist(vararg segments: Triple<String?, String, String>, head: String = "") = buildString {
+        appendLine("#EXTM3U")
+        appendLine("#EXT-X-VERSION:3")
+        appendLine("#EXT-X-TARGETDURATION:6")
+        if (head.isNotEmpty()) appendLine(head)
+        for ((pdt, info, uri) in segments) {
+            if (pdt != null) appendLine("#EXT-X-PROGRAM-DATE-TIME:$pdt")
+            appendLine(info)
+            appendLine(uri)
+        }
+    }
+
+    @Test
+    fun readsTheNewestSegmentsTitleAndWallClockSpan() {
+        val text = playlist(
+            Triple("2026-01-01T12:00:00.000Z", "#EXTINF:2.000,live", "https://e/1.ts"),
+            Triple("2026-01-01T12:00:02.000Z", "#EXTINF:2.000,Amazon|123|x", "https://e/2.ts"),
+        )
+        val view = MediaPlaylistParser.view(text)!!
+        assertEquals("Amazon|123|x", view.newestSegmentTitle)
+        assertEquals(Instant.parse("2026-01-01T12:00:02Z").toEpochMilli(), view.newestSegmentStartMs)
+        assertEquals(Instant.parse("2026-01-01T12:00:04Z").toEpochMilli(), view.newestSegmentEndMs)
+        assertTrue(AdBreakDetector.isAdAtEdge(view))
+    }
+
+    @Test
+    fun segmentsAfterTheFirstDateStampAreTimedByTheirDurations() {
+        val text = playlist(
+            Triple("2026-01-01T12:00:00Z", "#EXTINF:2.000,live", "https://e/1.ts"),
+            Triple(null, "#EXTINF:2.000,live", "https://e/2.ts"),
+            Triple(null, "#EXTINF:1.500,live", "https://e/3.ts"),
+        )
+        val view = MediaPlaylistParser.view(text)!!
+        assertEquals(Instant.parse("2026-01-01T12:00:04Z").toEpochMilli(), view.newestSegmentStartMs)
+        assertEquals(Instant.parse("2026-01-01T12:00:05.500Z").toEpochMilli(), view.newestSegmentEndMs)
+    }
+
+    @Test
+    fun withoutAnyDateStampTimesAreUnknownButTheTitleStillCounts() {
+        val view = MediaPlaylistParser.view(playlist(Triple(null, "#EXTINF:2.000,Adform|1", "https://e/1.ts")))!!
+        assertEquals(null, view.newestSegmentStartMs)
+        assertEquals(null, view.newestSegmentEndMs)
+        assertTrue(AdBreakDetector.isAdAtEdge(view))
+    }
+
+    @Test
+    fun cleanLivePlaylistIsNotAnAdAndKeepsItsDaterangesAsTags() {
+        val head = """#EXT-X-DATERANGE:ID="splice-1",CLASS="timestamp",START-DATE="2026-01-01T11:00:00Z",DURATION=5"""
+        val view = MediaPlaylistParser.view(
+            playlist(Triple("2026-01-01T12:00:00Z", "#EXTINF:2.000,live", "https://e/1.ts"), head = head),
+        )!!
+        assertFalse(AdBreakDetector.isAdAtEdge(view))
+        assertTrue(view.tags.any { it.startsWith("#EXT-X-DATERANGE:") })
+    }
+
+    @Test
+    fun stitchedAdDaterangeInATextPlaylistIsDetectedEndToEnd() {
+        val head = """#EXT-X-DATERANGE:ID="stitched-ad-1",CLASS="twitch-stitched-ad",START-DATE="2026-01-01T11:59:50Z",DURATION=30.0"""
+        val view = MediaPlaylistParser.view(
+            playlist(Triple("2026-01-01T12:00:00Z", "#EXTINF:2.000,live", "https://e/1.ts"), head = head),
+        )!!
+        assertTrue(AdBreakDetector.isAdAtEdge(view))
+    }
+
+    @Test
+    fun emptyOrErrorBodiesGiveNoView() {
+        assertEquals(null, MediaPlaylistParser.view(""))
+        assertEquals(null, MediaPlaylistParser.view("""{"error":"Forbidden"}"""))
+        assertEquals(null, MediaPlaylistParser.view("#EXTM3U\n#EXT-X-ENDLIST\n"))
+    }
+
+    @Test
+    fun extinfWithoutATitleOrDurationDoesNotCrash() {
+        val view = MediaPlaylistParser.view("#EXTM3U\n#EXTINF:abc\nhttps://e/1.ts\n")!!
+        assertEquals(null, view.newestSegmentTitle)
+    }
+}
