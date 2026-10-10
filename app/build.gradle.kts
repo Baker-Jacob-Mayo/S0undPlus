@@ -51,6 +51,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    lint {
+        // Lint runs in CI for TV-specific manifest checks; findings are reported without failing the build.
+        abortOnError = false
+        textReport = true
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }

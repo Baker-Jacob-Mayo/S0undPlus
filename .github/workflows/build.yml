@@ -50,9 +50,38 @@ jobs:
           # Optional repository secret; without it the APK builds but shows a "configure client ID" screen.
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
         run: ./gradlew :app:assembleRelease --console=plain
+      - name: Inspect the built APK
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+          AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          echo "--- aapt2 badging (manifest as packaged) ---"
+          "$AAPT2" dump badging "$APK" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-feature|uses-implied-feature|leanback-launchable-activity|launchable-activity|application:|application-banner|banner)" || true
+          echo "--- app classes present in dex ---"
+          for c in ui/player/PlayerScreen ui/home/HomeViewModel ui/login/LoginScreen; do
+            n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/tv/$c" || true); echo "com/s0undplus/tv/$c: $n"
+          done
+          for c in playback/PlaybackApi chat/ChatClient api/HelixApi; do
+            n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/twitch/$c" || true); echo "com/s0undplus/twitch/$c: $n"
+          done
+      - name: Android lint (non-blocking)
+        continue-on-error: true
+        run: |
+          ./gradlew :app:lintRelease --console=plain || true
+          for f in app/build/reports/lint-results-release.txt app/build/intermediates/lint_intermediate_text_report/release/*/lint-results-release.txt; do
+            [ -f "$f" ] && { echo "=== $f ==="; head -c 20000 "$f"; }
+          done
+          true
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: S0undPlus-release-apk
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-release.*
+          if-no-files-found: ignore
