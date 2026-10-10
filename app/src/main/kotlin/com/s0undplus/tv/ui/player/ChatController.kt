@@ -77,7 +77,9 @@ class ChatController(
         }
         scope.launch {
             // Read storage directly: `settings` still holds its defaults until DataStore emits (see PlayerController).
-            if (c.settings.settings.first().chatHistory) {
+            val stored = c.settings.settings.first()
+            filter = stored.chatFilter
+            if (stored.chatHistory) {
                 for (message in c.recentMessages.fetch(login, HISTORY_LIMIT)) accept(message)
             }
             c.chat.events(login).collect(::onEvent)
