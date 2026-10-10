@@ -97,7 +97,7 @@ class ChatController(
             }
         }
         scope.launch {
-            val replay = VodChatReplay { offset, cursor -> c.vodChat.page(videoId, offset, cursor) }
+            val replay = VodChatReplay(fetch = { offset, cursor -> c.vodChat.page(videoId, offset, cursor) })
             var last = position()
             while (isActive) {
                 val now = position()
