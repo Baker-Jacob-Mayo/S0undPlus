@@ -137,7 +137,7 @@ class ChatController(
         }
         scope.launch {
             try {
-                _emotes.value = c.emotes.load(userId)
+                _emotes.value = c.emoteCache.directory(userId)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

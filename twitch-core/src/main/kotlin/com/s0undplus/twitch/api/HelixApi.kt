@@ -7,6 +7,7 @@ import com.s0undplus.twitch.FollowedChannel
 import com.s0undplus.twitch.HelixList
 import com.s0undplus.twitch.Page
 import com.s0undplus.twitch.Stream
+import com.s0undplus.twitch.TtlCache
 import com.s0undplus.twitch.TwitchApiException
 import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.TwitchJson
@@ -29,7 +30,11 @@ class HelixApi(
     private val http: OkHttpClient,
     private val config: TwitchConfig,
     private val session: AuthSession,
+    nowMs: () -> Long = System::currentTimeMillis,
 ) {
+    /** Badge sets rarely change and every channel switch asks for the same global set, so remember them for a while. */
+    private val badgeSets = TtlCache<String, List<BadgeSetDto>>(maxEntries = 11, ttlMs = BADGE_TTL_MS, nowMs = nowMs)
+
     /** Live streams from channels the signed-in viewer follows. Needs scope `user:read:follows`. */
     suspend fun followedStreams(after: String? = null, first: Int = 100): Page<Stream> =
         page(
@@ -120,11 +125,15 @@ class HelixApi(
 
     /** Global chat badges plus [broadcasterId]'s custom ones (channel sets override global ones). */
     suspend fun badges(broadcasterId: String?): BadgeDirectory {
-        val global = pageOf("chat/badges/global", BadgeSetDto.serializer(), emptyList()).items
+        val global = badgeSets.get(GLOBAL_BADGES) {
+            pageOf("chat/badges/global", BadgeSetDto.serializer(), emptyList()).items to true
+        }
         val channel = if (broadcasterId == null) {
             emptyList()
         } else {
-            pageOf("chat/badges", BadgeSetDto.serializer(), listOf("broadcaster_id" to broadcasterId)).items
+            badgeSets.get("channel:$broadcasterId") {
+                pageOf("chat/badges", BadgeSetDto.serializer(), listOf("broadcaster_id" to broadcasterId)).items to true
+            }
         }
         return BadgeDirectory.from(global, channel)
     }
@@ -174,5 +183,7 @@ class HelixApi(
 
     private companion object {
         const val MAX_IDS_PER_REQUEST = 100
+        const val BADGE_TTL_MS = 60 * 60_000L
+        const val GLOBAL_BADGES = "global"
     }
 }

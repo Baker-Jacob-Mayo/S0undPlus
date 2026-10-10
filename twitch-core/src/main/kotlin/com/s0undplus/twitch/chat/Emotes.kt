@@ -1,5 +1,7 @@
 package com.s0undplus.twitch.chat
 
+import com.s0undplus.twitch.TtlCache
+import com.s0undplus.twitch.TwitchApiException
 import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.awaitText
@@ -42,6 +44,38 @@ class EmoteDirectory(private val byName: Map<String, Emote>) {
 /** URL for a Twitch-native emote id (static frame, dark-theme variant, 2x: cheap to decode on a TV). */
 fun twitchEmoteUrl(id: String): String = "https://static-cdn.jtvnw.net/emoticons/v2/$id/static/dark/2.0"
 
+/** A provider group's emotes, and whether every provider actually answered (see [EmoteCache]). */
+class EmoteSet(val emotes: List<Emote>, val complete: Boolean) {
+    internal companion object {
+        fun of(vararg providers: List<Emote>?): EmoteSet =
+            EmoteSet(providers.flatMap { it.orEmpty() }, complete = providers.all { it != null })
+    }
+}
+
+/**
+ * Remembers [ThirdPartyEmotes] answers, because switching channels (peek, channel +/-, raids) would otherwise download
+ * the large global sets again every time. Global emotes are kept for [ttlMs]; so are the last [maxChannels]
+ * broadcasters' sets. An answer is only kept when every provider replied, so a provider that was briefly down is asked
+ * again next time instead of being cached as "no emotes" for an hour.
+ */
+class EmoteCache(
+    private val source: ThirdPartyEmotes,
+    ttlMs: Long = 60 * 60_000L,
+    maxChannels: Int = 10,
+    nowMs: () -> Long = System::currentTimeMillis,
+) {
+    private val global = TtlCache<Unit, List<Emote>>(maxEntries = 1, ttlMs = ttlMs, nowMs = nowMs)
+    private val channels = TtlCache<String, List<Emote>>(maxEntries = maxChannels, ttlMs = ttlMs, nowMs = nowMs)
+
+    suspend fun directory(channelId: String?): EmoteDirectory = coroutineScope {
+        val globalEmotes = async { global.get(Unit) { source.loadGlobalSet().let { it.emotes to it.complete } } }
+        val channelEmotes = async {
+            channelId?.let { id -> channels.get(id) { source.loadChannelSet(id).let { it.emotes to it.complete } } }
+        }
+        EmoteDirectory.merge(globalEmotes.await(), channelEmotes.await().orEmpty())
+    }
+}
+
 /**
  * Third-party emote sets (7TV, BetterTTV, FrankerFaceZ). Every provider is best-effort and independent: if one is
  * down or changes its format, chat still works with whatever the others returned.
@@ -49,31 +83,38 @@ fun twitchEmoteUrl(id: String): String = "https://static-cdn.jtvnw.net/emoticons
 class ThirdPartyEmotes(private val http: OkHttpClient, private val config: TwitchConfig) {
     /** Loads global + channel emotes for [channelId] (the broadcaster's Twitch user id; null = global only). */
     suspend fun load(channelId: String?): EmoteDirectory = coroutineScope {
-        val ffzGlobal = async { fetch("${config.ffzUrl}/set/global", ::parseFfzGlobal) }
-        val ffzChannel = async { channelId?.let { fetch("${config.ffzUrl}/room/id/$it", ::parseFfzRoom) } }
-        val bttvGlobal = async { fetch("${config.bttvUrl}/cached/emotes/global", ::parseBttvGlobal) }
-        val bttvChannel = async { channelId?.let { fetch("${config.bttvUrl}/cached/users/twitch/$it", ::parseBttvChannel) } }
-        val sevenGlobal = async { fetch("${config.sevenTvUrl}/emote-sets/global", ::parseSevenTvSet) }
-        val sevenChannel = async {
-            channelId?.let { fetch("${config.sevenTvUrl}/users/twitch/$it", ::parseSevenTvUser) }
-        }
-        EmoteDirectory.merge(
-            ffzGlobal.await(),
-            bttvGlobal.await(),
-            sevenGlobal.await(),
-            ffzChannel.await().orEmpty(),
-            bttvChannel.await().orEmpty(),
-            sevenChannel.await().orEmpty(),
-        )
+        val global = async { loadGlobalSet() }
+        val channel = async { channelId?.let { loadChannelSet(it) } }
+        EmoteDirectory.merge(global.await().emotes, channel.await()?.emotes.orEmpty())
     }
 
-    private suspend fun fetch(url: String, parse: (JsonElement) -> List<Emote>): List<Emote> = try {
+    /** The emotes available everywhere, lowest priority first (FFZ, BTTV, 7TV). */
+    suspend fun loadGlobalSet(): EmoteSet = coroutineScope {
+        val ffz = async { fetch("${config.ffzUrl}/set/global", ::parseFfzGlobal) }
+        val bttv = async { fetch("${config.bttvUrl}/cached/emotes/global", ::parseBttvGlobal) }
+        val seven = async { fetch("${config.sevenTvUrl}/emote-sets/global", ::parseSevenTvSet) }
+        EmoteSet.of(ffz.await(), bttv.await(), seven.await())
+    }
+
+    /** One broadcaster's own emotes, lowest priority first (FFZ, BTTV, 7TV). */
+    suspend fun loadChannelSet(channelId: String): EmoteSet = coroutineScope {
+        val ffz = async { fetch("${config.ffzUrl}/room/id/$channelId", ::parseFfzRoom) }
+        val bttv = async { fetch("${config.bttvUrl}/cached/users/twitch/$channelId", ::parseBttvChannel) }
+        val seven = async { fetch("${config.sevenTvUrl}/users/twitch/$channelId", ::parseSevenTvUser) }
+        EmoteSet.of(ffz.await(), bttv.await(), seven.await())
+    }
+
+    /** Null means the provider could not be asked (network error, server error, unreadable reply). */
+    private suspend fun fetch(url: String, parse: (JsonElement) -> List<Emote>): List<Emote>? = try {
         val text = http.newCall(Request.Builder().url(url).build()).awaitText()
         parse(TwitchJson.parseToJsonElement(text))
     } catch (e: CancellationException) {
         throw e
+    } catch (e: TwitchApiException) {
+        // A 404 is a definite answer ("this channel has no set"); anything else means we don't know.
+        if (e.status == 404) emptyList() else null
     } catch (_: Exception) {
-        emptyList() // network error, 404 (channel has no set) or a format change: skip this provider
+        null // network error or a format change: skip this provider
     }
 
     // --- BetterTTV: [{id, code, imageType, animated}] and {channelEmotes:[...], sharedEmotes:[...]} ---

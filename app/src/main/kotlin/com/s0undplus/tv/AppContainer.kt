@@ -9,6 +9,7 @@ import com.s0undplus.twitch.api.HelixApi
 import com.s0undplus.twitch.auth.AuthSession
 import com.s0undplus.twitch.auth.TwitchAuth
 import com.s0undplus.twitch.chat.ChatClient
+import com.s0undplus.twitch.chat.EmoteCache
 import com.s0undplus.twitch.chat.RecentMessagesApi
 import com.s0undplus.twitch.chat.VodChatApi
 import com.s0undplus.twitch.chat.ThirdPartyEmotes
@@ -45,6 +46,9 @@ class AppContainer(context: Context) {
     val playback = PlaybackApi(http, config)
     val chat = ChatClient(http, config)
     val emotes = ThirdPartyEmotes(http, config)
+
+    /** Global emote and badge sets are shared across streams, so surfing channels doesn't re-download them. */
+    val emoteCache = EmoteCache(emotes)
     val recentMessages = RecentMessagesApi(http, config)
     val vodChat = VodChatApi(http, config)
     val raids = RaidWatcher(http, config, session)

@@ -124,6 +124,29 @@ class HelixApiTest {
     }
 
     @Test
+    fun badgeSetsAreRememberedAcrossChannelSwitchesUntilTheyExpire() = runTest {
+        var now = 0L
+        val cached = HelixApi(testHttp(), configFor(server), session, nowMs = { now })
+        val global = """{"data":[{"set_id":"vip","versions":[{"id":"1","image_url_1x":"v1","image_url_2x":"v2"}]}]}"""
+        val channel = """{"data":[{"set_id":"subscriber","versions":[{"id":"0","image_url_2x":"c2"}]}]}"""
+        repeat(2) { server.enqueue(json(global)); server.enqueue(json(channel)) }
+
+        assertEquals("c2", cached.badges("10").url(BadgeRef("subscriber", "0")))
+        assertEquals(2, server.requestCount)
+        assertEquals("c2", cached.badges("10").url(BadgeRef("subscriber", "0")))
+        assertEquals(2, server.requestCount, "same channel again: nothing refetched")
+
+        server.enqueue(json(channel))
+        assertEquals("v2", cached.badges("11").url(BadgeRef("vip", "1")))
+        assertEquals(3, server.requestCount, "another channel fetches only its own set; global is reused")
+
+        now = 61 * 60_000L
+        server.enqueue(json(global)); server.enqueue(json(channel))
+        cached.badges("10")
+        assertEquals(5, server.requestCount, "after the TTL both are fetched again")
+    }
+
+    @Test
     fun videoByIdReturnsTheVideoOrNullWhenMissing() = runTest {
         server.enqueue(
             json(
