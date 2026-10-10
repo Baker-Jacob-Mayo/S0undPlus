@@ -19,8 +19,12 @@ fun setting(property: String, env: String): String {
 }
 
 val appVersionName = setting("appVersionName", "APP_VERSION_NAME").ifEmpty { "1.0.0" }
-// CI passes the run number, so every build is newer than the last (Android refuses to "downgrade").
-val appVersionCode = setting("appVersionCode", "GITHUB_RUN_NUMBER").toIntOrNull() ?: 1
+// Android compares versionCode (not versionName) when installing over an existing app, and refuses a lower one.
+// GITHUB_RUN_NUMBER is counted per workflow (Build and Release would collide), so derive the code from the clock
+// instead: minutes since 2026-10-01 only ever increases, across every workflow and local build, and is far above the
+// small codes (1..16) earlier CI builds used. Override with -PappVersionCode if you need a specific one.
+val appVersionCode = setting("appVersionCode", "APP_VERSION_CODE").toIntOrNull()
+    ?: (System.currentTimeMillis() / 60_000L - 29_850_000L).toInt()
 val signingKeystorePath = setting("signingKeystorePath", "SIGNING_KEYSTORE_PATH")
 val updateRepo = setting("updateRepo", "UPDATE_REPO").ifEmpty { "Baker-Jacob-Mayo/S0undPlus" }
 

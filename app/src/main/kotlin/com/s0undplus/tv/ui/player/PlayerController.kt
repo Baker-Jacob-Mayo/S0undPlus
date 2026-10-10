@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -121,7 +122,8 @@ class PlayerController(
 
     private fun watchRaids(live: PlayTarget.Live) {
         scope.launch {
-            if (!settings.value.followRaids) return@launch
+            // Read storage directly: `settings` is a StateFlow that still holds its defaults until DataStore emits.
+            if (!c.settings.settings.first().followRaids) return@launch
             val userId = live.userId ?: try {
                 c.helix.userByLogin(live.login)?.id
             } catch (e: CancellationException) {

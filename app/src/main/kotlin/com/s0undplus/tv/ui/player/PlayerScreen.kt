@@ -339,7 +339,7 @@ fun PlayerScreen(
 
     LaunchedEffect(ready, qualityChoice, audioOnly) {
         val stream = ready ?: return@LaunchedEffect
-        val (label, url) = resolve(stream, qualityChoice, audioOnly, controller.settings.value.quality)
+        val (label, url) = resolve(stream, qualityChoice, audioOnly, container.settings.settings.first().quality)
         qualityLabel = label
         val start = when {
             isLive -> C.TIME_UNSET

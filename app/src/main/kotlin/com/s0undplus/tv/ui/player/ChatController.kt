@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -75,7 +76,8 @@ class ChatController(
             }
         }
         scope.launch {
-            if (settings.value.chatHistory) {
+            // Read storage directly: `settings` still holds its defaults until DataStore emits (see PlayerController).
+            if (c.settings.settings.first().chatHistory) {
                 for (message in c.recentMessages.fetch(login, HISTORY_LIMIT)) accept(message)
             }
             c.chat.events(login).collect(::onEvent)

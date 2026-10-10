@@ -105,7 +105,9 @@ and must be installed after uninstalling the previous one** (you'd sign in again
    workflow builds, refuses to publish unless the secrets exist or if the APK is debug-signed, and attaches
    `S0undPlus-v1.1.0.apk` to a GitHub Release.
 
-The updater only looks at the repository named in `UPDATE_REPO` (default: this one). It verifies the download's signing
+The updater only looks at the repository named in `UPDATE_REPO` (default: this one) and calls GitHub's API without
+authentication, so **that repository (or a public releases repo you point `UPDATE_REPO` at) must be public**. Version
+codes come from the build time, so a release always counts as newer than any earlier build. It verifies the download's signing
 certificate matches the installed app before launching Android's installer, and explains the mismatch instead of failing
 with a generic "App not installed".
 
