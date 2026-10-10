@@ -57,7 +57,7 @@ jobs:
             echo "APK: $APK ($(du -h "$APK" | cut -f1))"
             AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
             echo "--- aapt2 badging (manifest as packaged) ---"
-            "$AAPT2" dump badging "$APK" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-feature|uses-implied-feature|leanback-launchable-activity|launchable-activity|application:|application-banner|banner)" || true
+            "$AAPT2" dump badging "$APK" | grep -E "^[[:space:]]*(package|sdkVersion|minSdkVersion|targetSdkVersion|uses-feature|uses-feature-not-required|uses-implied-feature|feature-group|leanback-launchable-activity|launchable-activity|application:|application-banner|banner|uses-permission)" || true
             echo "--- app classes present in dex (count of references) ---"
             for c in tv/ui/player/PlayerScreen tv/ui/home/HomeViewModel tv/ui/login/LoginScreen twitch/playback/PlaybackApi twitch/chat/ChatClient twitch/api/HelixApi; do
               n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/$c" || true); echo "com/s0undplus/$c: $n"
