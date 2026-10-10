@@ -3,7 +3,7 @@ package com.s0undplus.twitch.chat
 import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.awaitText
-import java.io.IOException
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -26,7 +26,10 @@ class RecentMessagesApi(private val http: OkHttpClient, private val config: Twit
             TwitchJson.decodeFromString(RecentMessagesResponse.serializer(), text).messages.mapNotNull { line ->
                 IrcParser.parse(line)?.let(ChatProtocol::parseMessage)
             }
-        } catch (_: IOException) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Network failure, an HTTP error, or a 200 whose body isn't JSON (captive portal, outage page): no backlog.
             emptyList()
         }
     }

@@ -14,7 +14,7 @@ import kotlinx.coroutines.cancel
  */
 @Composable
 fun rememberScreenScope(): CoroutineScope {
-    val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
+    val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + CrashGuard) }
     DisposableEffect(scope) { onDispose { scope.cancel() } }
     return scope
 }

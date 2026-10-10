@@ -3,6 +3,7 @@ package com.s0undplus.tv
 import android.content.Context
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.s0undplus.tv.data.SettingsRepository
+import com.s0undplus.tv.ui.util.CrashGuard
 import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.api.HelixApi
 import com.s0undplus.twitch.auth.AuthSession
@@ -35,7 +36,7 @@ class AppContainer(context: Context) {
     )
 
     /** For fire-and-forget work that must outlive a screen, e.g. saving a VOD resume point on exit. */
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CrashGuard)
 
     val settings = SettingsRepository(context)
     val auth = TwitchAuth(http, config)

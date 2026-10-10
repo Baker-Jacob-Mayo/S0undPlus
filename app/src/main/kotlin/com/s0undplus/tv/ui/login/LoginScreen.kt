@@ -75,6 +75,10 @@ fun LoginScreen() {
             } catch (_: IOException) {
                 state = LoginState.Failed("Couldn't reach Twitch. Check your connection and try again.")
                 return@LaunchedEffect
+            } catch (_: Exception) {
+                // e.g. a reply that isn't JSON: show it instead of letting it escape the effect and crash the app
+                state = LoginState.Failed("Twitch sent an unexpected reply. Try again.")
+                return@LaunchedEffect
             }
         }
     }
