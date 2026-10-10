@@ -65,7 +65,9 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --console=plain
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease --console=plain 2>&1 | tee build.log
       - name: Inspect the built APK
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
@@ -109,5 +111,10 @@ jobs:
         if: always()
         run: |
           echo "================ SUMMARY ================"
+          if [ -f build.log ]; then
+            echo "--- compiler errors (first 60) ---"
+            grep -E "^e: " build.log | sed -E 's#file:///home/runner/work/S0undPlus/S0undPlus/##' | cut -c1-320 | sort -u | head -60 || true
+            grep -E "What went wrong" -A4 build.log | head -12 || true
+          fi
           cat lint-errors.txt 2>/dev/null || echo "(no lint errors file)"
           cat apk-inspection.txt 2>/dev/null || echo "(no apk inspection)"
