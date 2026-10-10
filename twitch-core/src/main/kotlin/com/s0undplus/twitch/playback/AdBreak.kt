@@ -1,6 +1,10 @@
 package com.s0undplus.twitch.playback
 
+import com.s0undplus.twitch.await
 import java.time.OffsetDateTime
+import kotlin.coroutines.cancellation.CancellationException
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /**
  * What the player knows about the newest end of the live media playlist, stripped of any player-library types so the
@@ -132,6 +136,26 @@ object MediaPlaylistParser {
             }
         }
         return if (sawSegment) MediaPlaylistView(tags, newestTitle, newestStart, newestEnd) else null
+    }
+}
+
+/** Fetches a live media playlist and reads it; every failure is just "no answer this time". */
+object MediaPlaylistFetcher {
+    suspend fun view(http: OkHttpClient, url: String): MediaPlaylistView? {
+        val request = try {
+            Request.Builder().url(url).build()
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
+        return try {
+            http.newCall(request).await().use { response ->
+                if (response.isSuccessful) MediaPlaylistParser.view(response.body.string()) else null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
     }
 }
 

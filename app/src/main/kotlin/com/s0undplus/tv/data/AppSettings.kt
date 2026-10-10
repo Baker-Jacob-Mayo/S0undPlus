@@ -17,8 +17,14 @@ import com.s0undplus.twitch.chat.ChatFilter
 import com.s0undplus.twitch.library.FavoriteChannel
 import com.s0undplus.twitch.library.HistoryEntry
 import com.s0undplus.twitch.library.LibraryOps
+import com.s0undplus.twitch.playback.HttpProxy
+import com.s0undplus.twitch.playback.PlayerTypes
+import com.s0undplus.twitch.playback.ProxyDefaults
+import com.s0undplus.twitch.playback.ProxyEntry
+import com.s0undplus.twitch.playback.ProxyEntryCodec
 import com.s0undplus.twitch.playback.QualityPreference
 import com.s0undplus.twitch.playback.RefreshMode
+import com.s0undplus.twitch.playback.VideoSwapEntry
 import java.util.Locale
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -43,6 +49,18 @@ enum class DeletedStyle(val label: String) {
     HIDE("Hide"),
     GREY("Grey out"),
     SHOW("Show normally"),
+}
+
+/**
+ * What to do about the ads Twitch stitches into live streams. [OFF] is the default and means the app behaves exactly as
+ * if ad handling did not exist: nothing extra is requested and nothing is sent to any third party.
+ */
+enum class AdMode(val label: String) {
+    OFF("Off"),
+    HIDE("Hide ads (mute and black out)"),
+    PROXY("Ad-free copy via proxy URLs"),
+    HTTP_PROXY("Ad-free copy via HTTP proxy"),
+    VIDEO_SWAP("Ad-free copy via video swap"),
 }
 
 /** Everything the viewer can tweak. Plain data so the UI can copy-and-save it. */
@@ -83,7 +101,41 @@ data class AppSettings(
     val goLiveNotifications: Boolean = false,
     val homeChannel: Boolean = false,
     val autoUpdateCheck: Boolean = true,
+    // Ads (see [AdMode]); the lists start as copies of Xtra's built-in defaults but are only used if a mode asks for them
+    val adMode: AdMode = AdMode.OFF,
+    /** One proxy URL template per line, `$channel` standing in for the login; a leading `#` marks a disabled entry. */
+    val adProxies: String = ProxyEntryCodec.encode(ProxyDefaults.customProxies),
+    val adHttpHost: String = ProxyDefaults.httpProxy.host,
+    val adHttpPort: Int = ProxyDefaults.httpProxy.port,
+    val adHttpUser: String = "",
+    val adHttpPassword: String = "",
+    val adHttpToken: Boolean = ProxyDefaults.httpProxy.proxyToken,
+    val adHttpMultivariant: Boolean = ProxyDefaults.httpProxy.proxyMultivariant,
+    val adHttpMedia: Boolean = ProxyDefaults.httpProxy.proxyMedia,
+    /** `platform/playerType` per line; a leading `#` marks a disabled entry. */
+    val adSwap: String = ProxyEntryCodec.encodeSwap(ProxyDefaults.videoSwap),
+    val tokenPlayerType: String = PlayerTypes.SITE,
 ) {
+    val proxyEntries: List<ProxyEntry> get() = ProxyEntryCodec.decode(adProxies)
+
+    val swapEntries: List<VideoSwapEntry> get() = ProxyEntryCodec.decodeSwap(adSwap)
+
+    /** The configured HTTP proxy, or null while the host/port are incomplete. */
+    val httpProxy: HttpProxy?
+        get() = HttpProxy(
+            host = adHttpHost.trim(),
+            port = adHttpPort,
+            username = adHttpUser.ifBlank { null },
+            password = adHttpPassword.ifBlank { null },
+            proxyToken = adHttpToken,
+            proxyMultivariant = adHttpMultivariant,
+            proxyMedia = adHttpMedia,
+        ).takeIf { it.isValid }
+
+    /** The player type for the main stream's token: the default unless ad handling is switched on and says otherwise. */
+    val effectivePlayerType: String
+        get() = if (adMode == AdMode.OFF) PlayerTypes.SITE else PlayerTypes.normalize(tokenPlayerType)
+
     val chatFilter: ChatFilter
         get() = ChatFilter(
             hideBots = hideBots,
@@ -134,6 +186,17 @@ class SettingsRepository(private val context: Context) {
         val goLive = booleanPreferencesKey("go_live_notifications")
         val homeChannel = booleanPreferencesKey("home_channel")
         val autoUpdate = booleanPreferencesKey("auto_update_check")
+        val adMode = stringPreferencesKey("ad_mode")
+        val adProxies = stringPreferencesKey("ad_proxies")
+        val adHttpHost = stringPreferencesKey("ad_http_host")
+        val adHttpPort = intPreferencesKey("ad_http_port")
+        val adHttpUser = stringPreferencesKey("ad_http_user")
+        val adHttpPassword = stringPreferencesKey("ad_http_password")
+        val adHttpToken = booleanPreferencesKey("ad_http_token")
+        val adHttpMultivariant = booleanPreferencesKey("ad_http_multivariant")
+        val adHttpMedia = booleanPreferencesKey("ad_http_media")
+        val adSwap = stringPreferencesKey("ad_swap")
+        val tokenPlayerType = stringPreferencesKey("token_player_type")
 
         fun vod(id: String) = longPreferencesKey("vod_$id")
     }
@@ -254,6 +317,17 @@ class SettingsRepository(private val context: Context) {
             goLiveNotifications = this[Keys.goLive] ?: d.goLiveNotifications,
             homeChannel = this[Keys.homeChannel] ?: d.homeChannel,
             autoUpdateCheck = this[Keys.autoUpdate] ?: d.autoUpdateCheck,
+            adMode = enumOf(this[Keys.adMode], d.adMode),
+            adProxies = this[Keys.adProxies] ?: d.adProxies,
+            adHttpHost = this[Keys.adHttpHost] ?: d.adHttpHost,
+            adHttpPort = (this[Keys.adHttpPort] ?: d.adHttpPort).coerceIn(0, 65535),
+            adHttpUser = this[Keys.adHttpUser] ?: d.adHttpUser,
+            adHttpPassword = this[Keys.adHttpPassword] ?: d.adHttpPassword,
+            adHttpToken = this[Keys.adHttpToken] ?: d.adHttpToken,
+            adHttpMultivariant = this[Keys.adHttpMultivariant] ?: d.adHttpMultivariant,
+            adHttpMedia = this[Keys.adHttpMedia] ?: d.adHttpMedia,
+            adSwap = this[Keys.adSwap] ?: d.adSwap,
+            tokenPlayerType = PlayerTypes.normalize(this[Keys.tokenPlayerType] ?: d.tokenPlayerType),
         )
     }
 
@@ -286,6 +360,17 @@ class SettingsRepository(private val context: Context) {
         this[Keys.goLive] = s.goLiveNotifications
         this[Keys.homeChannel] = s.homeChannel
         this[Keys.autoUpdate] = s.autoUpdateCheck
+        this[Keys.adMode] = s.adMode.name
+        this[Keys.adProxies] = s.adProxies
+        this[Keys.adHttpHost] = s.adHttpHost
+        this[Keys.adHttpPort] = s.adHttpPort
+        this[Keys.adHttpUser] = s.adHttpUser
+        this[Keys.adHttpPassword] = s.adHttpPassword
+        this[Keys.adHttpToken] = s.adHttpToken
+        this[Keys.adHttpMultivariant] = s.adHttpMultivariant
+        this[Keys.adHttpMedia] = s.adHttpMedia
+        this[Keys.adSwap] = s.adSwap
+        this[Keys.tokenPlayerType] = s.tokenPlayerType
     }
 
     private inline fun <reified E : Enum<E>> enumOf(name: String?, default: E): E =

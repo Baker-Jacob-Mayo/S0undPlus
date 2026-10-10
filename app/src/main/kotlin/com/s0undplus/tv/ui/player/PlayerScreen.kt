@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -62,7 +63,9 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
@@ -70,6 +73,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.s0undplus.tv.LocalActivityBridge
 import com.s0undplus.tv.LocalAppContainer
+import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.data.ChatLayout
 import com.s0undplus.tv.ui.components.ClockText
@@ -149,6 +153,17 @@ fun PlayerScreen(
             .build()
     }
 
+    val adBlocker = remember(controller) {
+        AdBlocker(
+            http = container.http,
+            liveOffsetMs = { exo.currentLiveOffset.takeIf { it != C.TIME_UNSET } },
+            resolveAlt = controller::resolveAlt,
+            onAltFailed = controller::noteAltFailure,
+        )
+    }
+    val adState = adBlocker.state
+    val alt = adBlocker.alt
+
     var controlsVisible by remember { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(Menu.None) }
@@ -175,6 +190,10 @@ fun PlayerScreen(
     val firstPeekItem = remember { FocusRequester() }
 
     val ready = (phase as? PlayerController.Phase.Ready)?.stream
+    val readyVia = (phase as? PlayerController.Phase.Ready)?.via
+    // A stream that already came from the proxy list is expected to be ad-free, so only a direct stream is watched.
+    val watchAds = isLive && settings.adMode != AdMode.OFF && !(settings.adMode == AdMode.PROXY && readyVia != null)
+    val swapAds = settings.adMode == AdMode.HTTP_PROXY || settings.adMode == AdMode.VIDEO_SWAP
     val chatShown = settings.chatVisible && !bridge.inPip
 
     fun saveProgress() {
@@ -261,6 +280,7 @@ fun PlayerScreen(
                         is RefreshStep.Retry -> {
                             recoveryMessage = "Reconnecting… (${attempt + 1}/${policy.maxAttempts})"
                             delay(step.delayMs)
+                            controller.noteStreamFailure()
                             controller.load()
                             val after = controller.phase.first { it !is PlayerController.Phase.Loading }
                             if (after is PlayerController.Phase.Ready) {
@@ -278,6 +298,11 @@ fun PlayerScreen(
                 recoveryMessage = null
             }
         }
+    }
+
+    /** A live stream stopped working: if that is the ad-free copy, give it up; otherwise reconnect as usual. */
+    fun streamProblem() {
+        if (adBlocker.state == AdState.Swapped) adBlocker.altFailed() else startRecovery()
     }
 
     fun adjustVolume(up: Boolean) {
@@ -302,7 +327,7 @@ fun PlayerScreen(
                         playerError = null
                         endedNote = null
                     }
-                    Player.STATE_ENDED -> if (isLive) startRecovery()
+                    Player.STATE_ENDED -> if (isLive) streamProblem()
                 }
             }
 
@@ -318,6 +343,7 @@ fun PlayerScreen(
                         exo.seekToDefaultPosition()
                         exo.prepare()
                     }
+                    isLive && adBlocker.state == AdState.Swapped -> adBlocker.altFailed()
                     isLive && settings.autoRefresh -> startRecovery()
                     else -> playerError = error.errorCodeName
                 }
@@ -337,8 +363,18 @@ fun PlayerScreen(
         onDispose { bridge.pipEligible = false }
     }
 
-    LaunchedEffect(ready, qualityChoice, audioOnly) {
-        val stream = ready ?: return@LaunchedEffect
+    // Ad handling: watch the original stream's playlist for ad breaks, and mute/black out while one plays.
+    val watchUrl = rememberUpdatedState(ready?.let { mediaPlaylistUrl(it, qualityChoice, audioOnly, settings.quality) })
+    LaunchedEffect(watchAds, swapAds, ready != null) {
+        if (watchAds) adBlocker.run({ watchUrl.value }, swapAds)
+    }
+    LaunchedEffect(adState) {
+        exo.volume = if (adState == AdState.Hiding) 0f else 1f
+    }
+
+    LaunchedEffect(ready, qualityChoice, audioOnly, alt) {
+        val original = ready ?: return@LaunchedEffect
+        val stream = alt?.stream ?: original // during an ad break the ad-free copy stands in for the original
         val (label, url) = resolve(stream, qualityChoice, audioOnly, container.settings.settings.first().quality)
         qualityLabel = label
         val start = when {
@@ -346,7 +382,14 @@ fun PlayerScreen(
             exo.mediaItemCount > 0 -> exo.currentPosition // changing quality mid-VOD keeps your place
             else -> (target as? PlayTarget.Vod)?.let { container.settings.vodPosition(it.id) } ?: C.TIME_UNSET
         }
-        exo.setMediaItem(MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build(), start)
+        val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build()
+        val proxiedMedia = alt?.source?.mediaClient(container.http)
+        if (proxiedMedia != null) {
+            // The HTTP proxy is meant to serve this stream's media playlists, so the player must fetch them through it.
+            exo.setMediaSource(HlsMediaSource.Factory(OkHttpDataSource.Factory(proxiedMedia)).createMediaSource(item), start)
+        } else {
+            exo.setMediaItem(item, start)
+        }
         exo.prepare()
         exo.play()
         playerError = null
@@ -367,7 +410,7 @@ fun PlayerScreen(
                 delay(2_000)
                 if (stall.isStalled(SystemClock.elapsedRealtime())) {
                     stall.onProgress()
-                    startRecovery()
+                    streamProblem()
                 }
             }
         }
@@ -555,6 +598,12 @@ fun PlayerScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
 
+                if (adState == AdState.Hiding) {
+                    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                        Text("Ad break — hidden", style = MaterialTheme.typography.titleMedium, color = Palette.Muted)
+                    }
+                }
+
                 if (audioOnly && playerError == null) {
                     Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
                         Text("Audio only", style = MaterialTheme.typography.headlineMedium, color = Palette.BrandSoft)
@@ -590,7 +639,7 @@ fun PlayerScreen(
                                     controller.load()
                                 },
                             )
-                        } else if (buffering && !bridge.inPip) {
+                        } else if (buffering && !bridge.inPip && adState != AdState.Hiding) {
                             CenteredSpinner()
                         }
                     }
@@ -606,6 +655,9 @@ fun PlayerScreen(
 
                 if (!bridge.inPip) {
                     recoveryMessage?.let { Banner(it, Modifier.align(Alignment.TopCenter)) }
+                    if (adState == AdState.Swapped) {
+                        Banner("Ad break — playing an ad-free copy", Modifier.align(Alignment.TopCenter))
+                    }
                     raid?.let { r ->
                         Banner(
                             "${r.fromLogin.ifEmpty { "This channel" }} is raiding ${r.toDisplayName} with ${Format.count(r.viewers)} viewers — " +
@@ -704,6 +756,13 @@ fun PlayerScreen(
 private fun titleOf(target: PlayTarget): String = when (target) {
     is PlayTarget.Live -> target.displayName
     is PlayTarget.Vod -> target.title
+}
+
+/** The media playlist (never the master) of the quality being watched, which is where ad breaks show up. */
+private fun mediaPlaylistUrl(stream: PlaybackStream, choice: String?, audioOnly: Boolean, preferred: String): String? {
+    val picked = resolve(stream, choice, audioOnly, preferred).second
+    if (picked != stream.masterUrl) return picked
+    return (stream.variants.firstOrNull { !it.isAudioOnly } ?: stream.variants.firstOrNull())?.url
 }
 
 /** Picks the playlist to hand to ExoPlayer and the label to show for it. */

@@ -1,6 +1,10 @@
 package com.s0undplus.twitch.playback
 
+import com.s0undplus.twitch.testHttp
+import com.s0undplus.twitch.text
 import java.time.Instant
+import kotlinx.coroutines.test.runTest
+import mockwebserver3.MockWebServer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -320,5 +324,27 @@ class MediaPlaylistParserTest {
     fun extinfWithoutATitleOrDurationDoesNotCrash() {
         val view = MediaPlaylistParser.view("#EXTM3U\n#EXTINF:abc\nhttps://e/1.ts\n")!!
         assertEquals(null, view.newestSegmentTitle)
+    }
+}
+
+class MediaPlaylistFetcherTest {
+    @Test
+    fun fetchesAndParsesAndSwallowsEveryKindOfFailure() = runTest {
+        val server = MockWebServer().also { it.start() }
+        try {
+            server.enqueue(text("#EXTM3U\n#EXTINF:2.000,Amazon|1\nhttps://e/1.ts\n"))
+            server.enqueue(text("forbidden", 403))
+            server.enqueue(text("not a playlist"))
+            val url = server.url("/v.m3u8").toString()
+
+            assertTrue(AdBreakDetector.isAdAtEdge(MediaPlaylistFetcher.view(testHttp(), url)!!))
+            assertEquals(null, MediaPlaylistFetcher.view(testHttp(), url))
+            assertEquals(null, MediaPlaylistFetcher.view(testHttp(), url))
+            assertEquals(null, MediaPlaylistFetcher.view(testHttp(), "not a url"))
+        } finally {
+            server.close()
+        }
+        // The server is gone now: a connection failure is also just "no answer".
+        assertEquals(null, MediaPlaylistFetcher.view(testHttp(), "http://127.0.0.1:1/v.m3u8"))
     }
 }

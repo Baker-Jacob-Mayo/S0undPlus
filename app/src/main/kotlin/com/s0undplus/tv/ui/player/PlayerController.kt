@@ -1,12 +1,14 @@
 package com.s0undplus.tv.ui.player
 
 import com.s0undplus.tv.AppContainer
+import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.ui.components.describe
 import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.eventsub.RaidEvent
 import com.s0undplus.twitch.playback.ChannelOfflineException
+import com.s0undplus.twitch.playback.PlaybackOptions
 import com.s0undplus.twitch.playback.PlaybackStream
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +32,8 @@ class PlayerController(
 ) {
     sealed interface Phase {
         data object Loading : Phase
-        data class Ready(val stream: PlaybackStream) : Phase
+        /** [via] is the proxy this stream came from in [AdMode.PROXY]; null for a normal direct stream. */
+        data class Ready(val stream: PlaybackStream, val via: AdSource? = null) : Phase
         data class Failed(val message: String, val offline: Boolean) : Phase
     }
 
@@ -58,6 +61,12 @@ class PlayerController(
     /** Live followed channels (falling back to top streams) for peek view and channel up/down. */
     val others: StateFlow<List<Stream>> = _others.asStateFlow()
 
+    /** Index of the next proxy to try in [AdMode.PROXY]; moves on whenever one fails, never back. */
+    private var proxyCursor = 0
+
+    /** Same, for the sources that supply an ad-free copy during a break. */
+    private var altCursor = 0
+
     init {
         load()
         (target as? PlayTarget.Live)?.let { watchRaids(it) }
@@ -77,11 +86,10 @@ class PlayerController(
         _phase.value = Phase.Loading
         scope.launch {
             try {
-                val stream = when (val t = target) {
-                    is PlayTarget.Live -> c.playback.live(t.login)
-                    is PlayTarget.Vod -> c.playback.vod(t.id)
+                _phase.value = when (val t = target) {
+                    is PlayTarget.Live -> loadLive(t.login)
+                    is PlayTarget.Vod -> Phase.Ready(c.playback.vod(t.id))
                 }
-                _phase.value = Phase.Ready(stream)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChannelOfflineException) {
@@ -90,6 +98,60 @@ class PlayerController(
                 _phase.value = Phase.Failed(describe(e), offline = false)
             }
         }
+    }
+
+    /**
+     * Live streams normally come straight from Twitch. In [AdMode.PROXY] the whole stream is requested from the
+     * viewer's proxy list instead, trying a few entries per load and moving past any that fail (the same failover Xtra
+     * has); once the list is used up, or if it is empty, playback falls back to Twitch directly.
+     */
+    private suspend fun loadLive(login: String): Phase.Ready {
+        val s = c.settings.settings.first() // read storage: [settings] still holds its defaults until DataStore emits
+        if (s.adMode == AdMode.PROXY) {
+            val sources = s.adSources()
+            var attempts = 0
+            while (attempts < MAX_PROXY_ATTEMPTS && proxyCursor < sources.size) {
+                val source = sources[proxyCursor]
+                try {
+                    return Phase.Ready(c.playback.live(login, source.options), via = source)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    proxyCursor++
+                    attempts++
+                }
+            }
+        }
+        return Phase.Ready(c.playback.live(login, PlaybackOptions(playerType = s.effectivePlayerType)))
+    }
+
+    /** A proxied stream died mid-playback: don't pick the same proxy again for the reconnect. */
+    fun noteStreamFailure() {
+        if ((_phase.value as? Phase.Ready)?.via != null) proxyCursor++
+    }
+
+    /**
+     * The ad-free copy to show while an ad plays ([AdMode.HTTP_PROXY], [AdMode.VIDEO_SWAP]): the first source that
+     * still works. Null when every source has failed, in which case the ad is just hidden.
+     */
+    suspend fun resolveAlt(): AltStream? {
+        val live = target as? PlayTarget.Live ?: return null
+        val sources = c.settings.settings.first().adSources()
+        while (altCursor < sources.size) {
+            val source = sources[altCursor]
+            try {
+                return AltStream(source, c.playback.live(live.login, source.options))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                altCursor++
+            }
+        }
+        return null
+    }
+
+    fun noteAltFailure() {
+        altCursor++
     }
 
     /** Whether the live channel is still broadcasting per Helix; null if the check itself failed. */
@@ -139,5 +201,10 @@ class PlayerController(
                 // raid redirect is a nicety; never disturb playback
             }
         }
+    }
+
+    private companion object {
+        /** Each failed proxy costs up to its connect timeout, so a single load only works through a few of them. */
+        const val MAX_PROXY_ATTEMPTS = 3
     }
 }
