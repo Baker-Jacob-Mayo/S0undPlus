@@ -133,6 +133,19 @@ class HelixApiTest {
     }
 
     @Test
+    fun streamsByLoginsSendsRepeatedUserLoginParamsAndChunks() = runTest {
+        val logins = (1..130).map { "chan$it" }
+        server.enqueue(json(streamJson))
+        server.enqueue(json("""{"data":[]}"""))
+        val live = helix.streamsByLogins(logins + logins.take(5)) // duplicates are dropped
+        assertEquals(1, live.size)
+        val first = server.takeRequest().url
+        assertEquals(100, first.queryParameterValues("user_login").size)
+        assertEquals("100", first.queryParameter("first"))
+        assertEquals(30, server.takeRequest().url.queryParameterValues("user_login").size)
+    }
+
+    @Test
     fun channelBadgesOverrideGlobalOnes() = runTest {
         server.enqueue(
             json("""{"data":[{"set_id":"subscriber","versions":[{"id":"0","image_url_1x":"g1","image_url_2x":"g2"}]},{"set_id":"vip","versions":[{"id":"1","image_url_1x":"v1","image_url_2x":"v2"}]}]}"""),

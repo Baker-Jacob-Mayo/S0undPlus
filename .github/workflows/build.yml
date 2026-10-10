@@ -47,10 +47,24 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-37" "build-tools;36.0.0" || true
-      - name: Build release APK (debug-signed, sideloadable)
+      - name: Restore signing key (when the secrets exist)
         env:
-          # Optional repository secret; without it the APK builds but shows a "configure client ID" screen.
+          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Signing with the configured stable key."
+          else
+            echo "No SIGNING_KEYSTORE_BASE64 secret: falling back to the per-run debug key (builds won't install over each other)."
+          fi
+      - name: Build release APK
+        env:
+          # Optional repository secrets; without TWITCH_CLIENT_ID the APK shows a "configure client ID" screen.
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --console=plain
       - name: Inspect the built APK
         run: |
@@ -61,6 +75,9 @@ jobs:
             for c in tv/ui/player/PlayerScreen tv/ui/home/HomeViewModel tv/ui/login/LoginScreen twitch/playback/PlaybackApi twitch/chat/ChatClient twitch/api/HelixApi; do
               n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/$c" || true); echo "com/s0undplus/$c: $n"
             done
+            APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+            echo "--- signer ---"
+            "$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep -E "Signer #1 certificate (DN|SHA-256)" || true
             AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
             echo "--- aapt2 badging (manifest as packaged) ---"
             "$AAPT2" dump badging "$APK" | grep -E "^[[:space:]]*(package|sdkVersion|minSdkVersion|targetSdkVersion|uses-feature|uses-feature-not-required|uses-implied-feature|feature-group|leanback-launchable-activity|launchable-activity|application:|application-banner|banner|uses-permission)" || true

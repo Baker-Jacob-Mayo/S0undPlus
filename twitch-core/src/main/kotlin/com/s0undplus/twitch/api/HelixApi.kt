@@ -69,6 +69,12 @@ class HelixApi(
     suspend fun streamByLogin(login: String): Stream? =
         page("streams", Stream.serializer(), "user_login" to login, "first" to 1).items.firstOrNull()
 
+    /** Live streams among the given channel logins (offline channels are simply absent). Chunked at 100 per call. */
+    suspend fun streamsByLogins(logins: List<String>): List<Stream> =
+        logins.distinct().chunked(MAX_IDS_PER_REQUEST).flatMap { chunk ->
+            pageOf("streams", Stream.serializer(), chunk.map { "user_login" to it } + ("first" to MAX_IDS_PER_REQUEST)).items
+        }
+
     suspend fun topCategories(after: String? = null, first: Int = 30): Page<Category> =
         page("games/top", Category.serializer(), "first" to first, "after" to after)
 

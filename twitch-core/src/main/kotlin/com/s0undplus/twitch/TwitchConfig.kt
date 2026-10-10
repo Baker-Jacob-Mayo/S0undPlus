@@ -17,6 +17,7 @@ data class TwitchConfig(
     val usherUrl: String = "https://usher.ttvnw.net",
     val webClientId: String = "kimne78kx3ncx6brgo4mv6wki5h1ko",
     val ircUrl: String = "wss://irc-ws.chat.twitch.tv:443",
+    val eventSubUrl: String = "wss://eventsub.wss.twitch.tv/ws",
     val recentMessagesUrl: String = "https://recent-messages.robotty.de/api/v2/recent-messages",
     val bttvUrl: String = "https://api.betterttv.net/3",
     val sevenTvUrl: String = "https://7tv.io/v3",

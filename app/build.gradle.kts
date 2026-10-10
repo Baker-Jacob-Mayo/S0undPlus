@@ -18,6 +18,12 @@ fun setting(property: String, env: String): String {
     return ""
 }
 
+val appVersionName = setting("appVersionName", "APP_VERSION_NAME").ifEmpty { "1.0.0" }
+// CI passes the run number, so every build is newer than the last (Android refuses to "downgrade").
+val appVersionCode = setting("appVersionCode", "GITHUB_RUN_NUMBER").toIntOrNull() ?: 1
+val signingKeystorePath = setting("signingKeystorePath", "SIGNING_KEYSTORE_PATH")
+val updateRepo = setting("updateRepo", "UPDATE_REPO").ifEmpty { "Baker-Jacob-Mayo/S0undPlus" }
+
 android {
     namespace = "com.s0undplus.tv"
     compileSdk { version = release(37) }
@@ -26,22 +32,39 @@ android {
         applicationId = "com.s0undplus.tv"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         // Your own Twitch application's client ID (https://dev.twitch.tv/console). See README.
         buildConfigField("String", "TWITCH_CLIENT_ID", "\"${setting("twitchClientId", "TWITCH_CLIENT_ID")}\"")
+        // GitHub "owner/repo" whose latest release the in-app updater checks.
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
+        // True when signed with your own stable key: only then can an update install over the previous build.
+        buildConfigField("boolean", "STABLE_SIGNING", "${signingKeystorePath.isNotEmpty()}")
     }
 
     buildFeatures {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (signingKeystorePath.isNotEmpty()) {
+            create("release") {
+                storeFile = file(signingKeystorePath)
+                storePassword = setting("signingStorePassword", "SIGNING_STORE_PASSWORD")
+                keyAlias = setting("signingKeyAlias", "SIGNING_KEY_ALIAS")
+                keyPassword = setting("signingKeyPassword", "SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Sideload-friendly: optimized (non-debuggable) but signed with the debug key so it installs as-is.
-            // Compose is far smoother on TV hardware without the debuggable overhead.
-            signingConfig = signingConfigs.getByName("debug")
+            // Optimized (non-debuggable) build: Compose is far smoother on TV hardware without debug overhead.
+            // With a keystore configured it is signed with YOUR stable key, so new builds update old ones in place.
+            // Without one it falls back to the debug key, which is different on every CI run: such APKs can be
+            // installed, but not over each other (uninstall first). See README "Signing".
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
         }
     }

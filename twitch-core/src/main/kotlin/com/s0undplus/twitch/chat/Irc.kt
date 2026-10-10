@@ -109,6 +109,8 @@ data class ChatMessage(
     val timestampMillis: Long,
     val isHighlighted: Boolean = false,
     val bits: Int = 0,
+    /** For VOD chat replay: when this message was sent, relative to the start of the video. Null for live chat. */
+    val vodOffsetMs: Long? = null,
 )
 
 sealed interface ChatEvent {

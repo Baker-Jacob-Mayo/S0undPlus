@@ -1,9 +1,9 @@
 package com.s0undplus.twitch.chat
 
+import com.s0undplus.twitch.Backoff
 import com.s0undplus.twitch.TwitchConfig
 import java.io.IOException
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.math.min
 import kotlin.random.Random
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.currentCoroutineContext
@@ -45,10 +45,7 @@ class ChatClient(
         }
     }
 
-    internal fun backoffMillis(attempt: Int): Long {
-        val base = min(MAX_BACKOFF_MS, INITIAL_BACKOFF_MS shl min(attempt, 5))
-        return base + random.nextLong(0, 500)
-    }
+    internal fun backoffMillis(attempt: Int): Long = Backoff.millis(attempt, random)
 
     private fun session(channel: String): Flow<ChatEvent> = callbackFlow {
         val nick = "justinfan${random.nextInt(10_000, 99_999)}"
@@ -84,10 +81,5 @@ class ChatClient(
             },
         )
         awaitClose { socket.close(1000, "done") }
-    }
-
-    private companion object {
-        const val INITIAL_BACKOFF_MS = 1_000L
-        const val MAX_BACKOFF_MS = 30_000L
     }
 }
