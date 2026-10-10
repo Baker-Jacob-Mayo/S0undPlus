@@ -53,24 +53,25 @@ jobs:
       - name: Inspect the built APK
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
-          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
-          AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
-          echo "--- aapt2 badging (manifest as packaged) ---"
-          "$AAPT2" dump badging "$APK" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-feature|uses-implied-feature|leanback-launchable-activity|launchable-activity|application:|application-banner|banner)" || true
-          echo "--- app classes present in dex ---"
-          for c in ui/player/PlayerScreen ui/home/HomeViewModel ui/login/LoginScreen; do
-            n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/tv/$c" || true); echo "com/s0undplus/tv/$c: $n"
-          done
-          for c in playback/PlaybackApi chat/ChatClient api/HelixApi; do
-            n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/twitch/$c" || true); echo "com/s0undplus/twitch/$c: $n"
-          done
+          {
+            echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+            AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+            echo "--- aapt2 badging (manifest as packaged) ---"
+            "$AAPT2" dump badging "$APK" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-feature|uses-implied-feature|leanback-launchable-activity|launchable-activity|application:|application-banner|banner)" || true
+            echo "--- app classes present in dex (count of references) ---"
+            for c in tv/ui/player/PlayerScreen tv/ui/home/HomeViewModel tv/ui/login/LoginScreen twitch/playback/PlaybackApi twitch/chat/ChatClient twitch/api/HelixApi; do
+              n=$(unzip -p "$APK" 'classes*.dex' | grep -a -c "com/s0undplus/$c" || true); echo "com/s0undplus/$c: $n"
+            done
+          } | tee apk-inspection.txt
       - name: Android lint (non-blocking)
         continue-on-error: true
         run: |
           ./gradlew :app:lintRelease --console=plain || true
-          for f in app/build/reports/lint-results-release.txt app/build/intermediates/lint_intermediate_text_report/release/*/lint-results-release.txt; do
-            [ -f "$f" ] && { echo "=== $f ==="; head -c 20000 "$f"; }
-          done
+          R=$(ls app/build/reports/lint-results-release.txt 2>/dev/null || find app/build -name 'lint-results-release.txt' | head -1)
+          echo "lint report: ${R:-none}"
+          if [ -n "$R" ]; then
+            { echo "--- lint ERRORS only ---"; grep -E ": Error:" "$R" | sed -E 's#/home/runner/work/S0undPlus/S0undPlus/##' | cut -c1-400; tail -n 1 "$R"; } | tee lint-errors.txt
+          fi
           true
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -85,3 +86,9 @@ jobs:
           name: lint-report
           path: app/build/reports/lint-results-release.*
           if-no-files-found: ignore
+      - name: Summary (compact, for quick reading)
+        if: always()
+        run: |
+          echo "================ SUMMARY ================"
+          cat apk-inspection.txt 2>/dev/null || echo "(no apk inspection)"
+          cat lint-errors.txt 2>/dev/null || echo "(no lint errors file)"

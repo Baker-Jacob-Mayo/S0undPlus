@@ -2,6 +2,7 @@ package com.s0undplus.tv.ui.player
 
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
