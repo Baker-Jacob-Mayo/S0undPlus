@@ -130,6 +130,46 @@ class RaidWatcherTest {
     }
 
     @Test
+    fun aRateLimitedSubscribeIsRetriedInsteadOfDisablingRaidsForTheSession() = runBlocking {
+        val config = configFor(server).copy(eventSubUrl = server.url("/eventsub").toString().replaceFirst("http", "ws"))
+        val serverSocket = AtomicReference<WebSocket>()
+        val subscribeCalls = java.util.concurrent.atomic.AtomicInteger()
+
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
+                "/eventsub" -> MockResponse.Builder().webSocketUpgrade(
+                    object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            serverSocket.set(webSocket)
+                            webSocket.send(welcome)
+                        }
+
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                            webSocket.close(1000, null)
+                        }
+
+                        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = Unit
+                    },
+                ).build()
+                "/helix/eventsub/subscriptions" ->
+                    if (subscribeCalls.incrementAndGet() == 1) {
+                        json("""{"status":429,"message":"Too Many Requests"}""", 429)
+                    } else {
+                        serverSocket.get().send(raidNotification)
+                        json("""{"data":[{"id":"sub1","status":"enabled"}]}""", 202)
+                    }
+                else -> MockResponse.Builder().code(404).build()
+            }
+        }
+
+        val watcher = RaidWatcher(testHttp(), config, signedInSession(config), Random(1))
+        val raid = withTimeout(15_000) { watcher.raids("10").first() }
+
+        assertEquals("bob", raid.toLogin)
+        assertEquals(2, subscribeCalls.get())
+    }
+
+    @Test
     fun givesUpQuietlyWhenTwitchRefusesTheSubscription() = runBlocking {
         val config = configFor(server).copy(eventSubUrl = server.url("/eventsub").toString().replaceFirst("http", "ws"))
         server.dispatcher = object : Dispatcher() {

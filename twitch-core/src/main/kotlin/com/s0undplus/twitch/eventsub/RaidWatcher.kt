@@ -129,7 +129,8 @@ class RaidWatcher(
                 throw e
             } catch (e: TwitchApiException) {
                 // 4xx = not allowed to subscribe (bad token, missing scope): retrying won't help. Give up quietly.
-                if (e.status in 400..499) return@flow
+                // 429 is only "slow down" and falls through to the backoff below.
+                if (e.status in 400..499 && e.status != 429) return@flow
                 url = config.eventSubUrl
                 resumed = false
             } catch (_: IOException) {
