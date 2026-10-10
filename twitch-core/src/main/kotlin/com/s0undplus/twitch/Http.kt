@@ -33,7 +33,9 @@ internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont
             }
 
             override fun onResponse(call: Call, response: Response) {
-                cont.resume(response)
+                // If the caller was cancelled while the response was arriving nobody will read it: close it, or
+                // OkHttp holds the connection until GC and logs a leak.
+                cont.resume(response) { _, _, _ -> response.close() }
             }
         },
     )
