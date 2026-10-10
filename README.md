@@ -16,35 +16,57 @@ opens on a "needs a Twitch client ID" screen. To get a working build:
    `TWITCH_CLIENT_ID`, paste the client ID.
 3. Re-run the **Build** workflow, download the **S0undPlus-release-apk** artifact, and [sideload it](#build--install).
 
+> **Recommended:** also set up [signing](#signing-and-releases) once. Without your own signing key every CI build is signed
+> differently, so each new APK has to be installed *after uninstalling the old one*, and the in-app updater can't work.
+
 ## Features
+
+Everything in S0undTV's feature list is here except where noted in [What's different](#whats-different-from-s0undtv).
 
 | | |
 |---|---|
 | **Sign in with your phone** | Twitch device-code login with a QR code — no typing on the TV. Read-only scope (`user:read:follows`). |
-| **Browse** | Followed channels that are live, top live streams, categories, search (channels + categories). |
+| **Browse** | **Following** (favorites → live now → offline), **Live**, **Language** row, **Categories**, **History**, **Search**. Long-press any card to open the channel page. |
 | **Remembers your place** | Going back from a stream returns to the same tab, scroll position and focused card. |
-| **Channel pages** | Profile, live status, past broadcasts (VODs) with **resume where you left off**. |
-| **Player** | Media3 / ExoPlayer HLS, quality picker + remembered preference, audio-only mode, live-edge recovery, VOD seeking. |
+| **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
+| **Channel pages & VODs** | Profile, live status, past broadcasts with **resume where you left off**, plus a **History** tab of what you watched. |
+| **Player** | Media3 HLS, quality picker with a remembered preference, audio-only mode, live-edge recovery, VOD seeking, touch/swipe gestures (volume, chat, seek). |
+| **Auto-refresh** | If a stream ends or stalls, the app checks the streamer is still online, then re-requests a fresh playback token and reconnects (normal or aggressive mode, configurable retries and interval). |
+| **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). |
+| **Raid redirect** | When the channel you're watching raids another one, you're taken along after a 10 s countdown (Back to stay). Uses Twitch's official EventSub. |
 | **Picture-in-picture** | Press Home while watching and the stream shrinks into a PiP window (Android 8+, device permitting). |
-| **Chat** | Live chat as an overlay or beside the video, with **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, and recent history from before you tuned in. |
+| **Chat** | Overlay or beside the video; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling. **VOD chat replay** in sync with the video. |
 | **Chat filters** | Hide known bots, `!commands`, blocked words and blocked users. |
-| **Remote-friendly** | Everything is D-pad navigable; media keys, Back, and shortcuts work as you'd expect (see below). |
+| **Chat on your phone** | QR code that opens the channel's chat on your phone, since TV chat is read-only. |
+| **Live previews** | Optional (off by default): a focused card plays a muted, lowest-quality preview using one shared player. |
+| **Go-live notifications** | Optional: checks about every 15 minutes and notifies when a followed channel goes live. Optional Android TV home-screen "Live now" row. |
+| **Themes & extras** | 5 themes, optional world clock, keep-screen-on setting, remote colour-button / channel +/- shortcuts, deep links (`twitch.tv/<login>`, `s0undplus://live/<login>`). |
+| **Updates** | In-app updater that checks GitHub Releases and verifies the APK is signed with the same key before installing. |
 
-### Not (yet) in S0undPlus
+### What's different from S0undTV
 
-S0undTV has more than this first version. Not implemented: VOD chat replay, "peek view" browsing while watching,
-live-stream previews, notifications when a followed streamer goes live, themes, world clock, per-channel profiles,
-language rows, and following/unfollowing from the app. Chat is read-only. PRs and issues welcome.
+- **Follow / unfollow isn't possible.** Twitch removed the follow API for third-party apps in July 2021 and offers no
+  replacement. S0undPlus gives you local **favorites** and a **"Follow on Twitch" QR code** on each channel page instead.
+- **Chat is read-only** (anonymous). Use the "Chat on phone" QR code to talk.
+- **"Recommendation channels"** are implemented as an Android TV home-screen row. Launchers that don't support app
+  channels (Google TV's newer home screen may not) will never show it.
+- **"Channel profiles"** are the channel pages (profile, VODs, favorite toggle); per-channel settings aren't implemented.
+- **Standalone vs Play versions** don't apply: this is distributed as a GitHub-released APK.
 
 ## Remote controls
 
 | Where | Key | Action |
 |---|---|---|
-| Player (overlay hidden) | OK / Up / Down | Show controls |
+| Player (overlay hidden) | OK / Up | Show controls |
+| Player, live | Down | Peek at other live channels |
 | Player, live | Right / Left | Show / hide chat |
 | Player, VOD | Left / Right | Seek −10 s / +10 s |
 | Player | Play/Pause, Rewind, Fast-forward | As labelled (rewind/FF seek ±30 s on VODs) |
+| Player | Red / Green / Yellow / Blue | Chat / quality / audio-only / peek |
+| Player | Channel +/− | Next / previous followed live channel |
+| Player | Info or Menu | Show controls |
 | Player | Back | Close menu → hide controls → leave the stream |
+| Home | long-press OK on a card | Open the channel page (or remove from History) |
 | Anywhere | Back | Previous screen |
 
 ## Setup
@@ -66,6 +88,26 @@ twitchClientId=YOUR_CLIENT_ID
 or `./gradlew :app:assembleRelease -PtwitchClientId=YOUR_CLIENT_ID`, or the `TWITCH_CLIENT_ID` environment variable.
 For CI, add it as a repository secret named `TWITCH_CLIENT_ID`. Without it the app builds and launches, but shows a
 "needs a Twitch client ID" screen.
+
+## Signing and releases
+
+Android only installs an update over an existing app if both APKs are signed with the **same key**. GitHub's runners
+create a throwaway debug key on every run, so until you provide your own key **each CI APK has a different signature
+and must be installed after uninstalling the previous one** (you'd sign in again). To fix that once:
+
+1. Run `scripts/make-keystore.sh` (needs a JDK's `keytool`). It creates `s0undplus-release.jks` — **keep it and its
+   password safe and private; never commit it** (`*.jks` is git-ignored) — and prints the secrets to add.
+2. Add these repository secrets: `SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`,
+   `SIGNING_KEY_PASSWORD` (and `TWITCH_CLIENT_ID`).
+3. Uninstall any older S0undPlus from the TV **once**, then install a build signed with your key. From then on builds
+   update in place.
+4. To publish a release the in-app updater can find: `git tag v1.1.0 && git push origin v1.1.0`. The **Release**
+   workflow builds, refuses to publish unless the secrets exist or if the APK is debug-signed, and attaches
+   `S0undPlus-v1.1.0.apk` to a GitHub Release.
+
+The updater only looks at the repository named in `UPDATE_REPO` (default: this one). It verifies the download's signing
+certificate matches the installed app before launching Android's installer, and explains the mismatch instead of failing
+with a generic "App not installed".
 
 ## Build & install
 
@@ -95,7 +137,12 @@ twitch-core/   Plain Kotlin/JVM library (included build) — all Twitch protocol
   auth/        Device-code OAuth + AuthSession (serialized refresh, retry-on-401)
   playback/    PlaybackApi (token → usher → master playlist), MasterPlaylist parser, QualityPreference
   chat/        IRC parser + ChatProtocol, ChatClient (anonymous WebSocket + backoff),
-               7TV/BTTV/FFZ emotes, ChatFormatter, ChatFilter, recent-messages history
+               7TV/BTTV/FFZ emotes, ChatFormatter, ChatFilter, recent-messages history,
+               VOD chat API + VodChatReplay (seek-aware buffering)
+  eventsub/    RaidWatcher over the official EventSub WebSocket
+  update/      GitHub-release update checker + version comparison
+  library/     bounded favorites / watch-history operations
+  (root)       AutoRefresh policy + stall detector, DeepLinkParser, languages
 app/           Android TV app — Compose for TV UI, Media3 player, DataStore persistence
 ```
 
@@ -133,19 +180,25 @@ are best-effort and optional.
 
 ## Project status
 
-What has and hasn't been verified (as of the first release):
+What has and hasn't been verified:
 
-- ✅ `twitch-core`: 54 unit tests pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
-  refresh, device-code polling, playlist/IRC/emote parsing, a real WebSocket round-trip with reconnect.
-- ✅ The Android app **compiles and packages** on GitHub Actions (AGP 9.4, Gradle 9.6, Kotlin 2.4, `compileSdk` 37),
-  Android lint reports **0 errors** (including its TV/Leanback manifest checks), and CI inspects the built APK with
-  `aapt2` to confirm the packaged manifest (Leanback launcher activity, banner, target SDK) and that the app's classes
-  made it into the dex.
-- ⚠️ **Not yet exercised on a real device against live Twitch.** The Twitch request/response shapes were taken from
-  Twitch's docs and from reading open-source clients (Streamlink, Xtra), and the 7TV/BTTV/FFZ parsers were written
-  against documented response shapes — but none of these services were reachable from the environment this was built
-  in. Expect to fix small things on first contact, most likely in `PlaybackApi` or the emote parsers. D-pad focus
-  behaviour and playback performance on real TV hardware are likewise untested.
+- ✅ `twitch-core`: **85 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
+  refresh, device-code polling, playlist/IRC/emote parsing, a real WebSocket round-trip with reconnect, an EventSub
+  WebSocket flow (welcome → subscribe → raid), VOD chat parsing and replay across seeks, auto-refresh rules, version
+  comparison, favorites/history bounds, deep-link parsing.
+- ✅ The Android app **compiles and packages** on GitHub Actions (AGP 9.4, Gradle 9.6, Kotlin 2.4, `compileSdk` 37);
+  Android lint reports **0 errors**; CI inspects the built APK with `aapt2` and `apksigner` (Leanback launcher, banner,
+  permissions, `uses-feature`, signer).
+- ⚠️ **Never exercised on a real device or against live Twitch.** The environment this was built in could not reach
+  Twitch, 7TV/BTTV/FFZ or the Android SDK hosts. Twitch request/response shapes come from Twitch's docs and from reading
+  open-source clients (Streamlink, Xtra, chat-downloader). Expect first-contact fixes, most likely in `PlaybackApi`, the
+  VOD-chat response parser, the emote parsers, and EventSub (the exact welcome payload and auth requirements for
+  `channel.raid` were not confirmed against Twitch's own docs). D-pad focus behaviour, playback performance,
+  notifications, the TV home row, PiP and the installer flow on real TV hardware are untested.
+- ⚠️ The **release workflow has never run** (it needs your signing secrets), and the **in-app updater has never installed
+  anything**.
+- ⚠️ VOD chat replay and playback use **undocumented Twitch endpoints** that can change without notice; both degrade
+  gracefully ("Chat replay isn't available") and never block the video.
 
 ## License
 
