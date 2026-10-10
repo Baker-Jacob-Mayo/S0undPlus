@@ -109,9 +109,15 @@ internal data class BadgeVersionDto(
     val title: String = "",
 )
 
-/** Helix thumbnails/box art contain `{width}x{height}` placeholders. */
+/**
+ * Helix thumbnails/box art contain `{width}x{height}` placeholders; video thumbnails use `%{width}x%{height}`, with
+ * percent signs. The percent forms go first, otherwise `%{width}` would become `%440`.
+ */
 internal fun String.sized(width: Int, height: Int): String =
-    replace("{width}", width.toString()).replace("{height}", height.toString())
+    replace("%{width}", width.toString())
+        .replace("%{height}", height.toString())
+        .replace("{width}", width.toString())
+        .replace("{height}", height.toString())
 
 private val DURATION = Regex("""(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?""")
 

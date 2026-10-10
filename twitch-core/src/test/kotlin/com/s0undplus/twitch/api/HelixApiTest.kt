@@ -113,12 +113,13 @@ class HelixApiTest {
         server.enqueue(
             json(
                 """{"data":[{"id":"v1","user_id":"10","user_login":"alice","user_name":"Alice","title":"VOD",
-                "created_at":"2026-01-01T00:00:00Z","thumbnail_url":"https://cdn/v-{width}x{height}.jpg","view_count":5,
+                "created_at":"2026-01-01T00:00:00Z","thumbnail_url":"https://cdn/v-%{width}x%{height}.jpg","view_count":5,
                 "type":"archive","duration":"1h2m3s"}],"pagination":{}}""",
             ),
         )
         val video = helix.videos("10").items.single()
         assertEquals(3723L, video.durationSeconds)
+        assertEquals("https://cdn/v-440x248.jpg", video.thumbnail())
         assertEquals("archive", server.takeRequest().url.queryParameter("type"))
     }
 
