@@ -16,6 +16,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.TimeUnit
+import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 
 class PlaybackApiTest {
@@ -256,5 +258,17 @@ class PlaybackApiTest {
         } finally {
             viaProxy.close()
         }
+    }
+
+    @Test
+    fun aSilentCustomProxyFailsFastSoTheNextOneCanBeTried() = runTest {
+        server.enqueue(MockResponse.Builder().body(master).headersDelay(3, TimeUnit.SECONDS).build())
+        val quick = PlaybackApi(testHttp(), configFor(server), Random(1), customUrlTimeoutMs = 300)
+        val template = server.url("/slow/\$channel").toString()
+
+        val started = System.nanoTime()
+        assertFailsWith<IOException> { quick.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template))) }
+        val tookMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue(tookMs < 2_000, "gave up after ${tookMs}ms instead of the 300ms limit")
     }
 }

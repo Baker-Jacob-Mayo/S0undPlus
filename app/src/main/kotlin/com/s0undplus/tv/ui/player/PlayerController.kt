@@ -1,5 +1,6 @@
 package com.s0undplus.tv.ui.player
 
+import android.os.SystemClock
 import com.s0undplus.tv.AppContainer
 import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.AppSettings
@@ -66,6 +67,7 @@ class PlayerController(
 
     /** Same, for the sources that supply an ad-free copy during a break. */
     private var altCursor = 0
+    private var altExhaustedAtMs = 0L
 
     init {
         load()
@@ -137,6 +139,8 @@ class PlayerController(
     suspend fun resolveAlt(): AltStream? {
         val live = target as? PlayTarget.Live ?: return null
         val sources = c.settings.settings.first().adSources()
+        // One transient failure shouldn't switch swapping off for the whole watch session: look again after a while.
+        if (altCursor >= sources.size && SystemClock.elapsedRealtime() - altExhaustedAtMs > ALT_RETRY_AFTER_MS) altCursor = 0
         while (altCursor < sources.size) {
             val source = sources[altCursor]
             try {
@@ -147,6 +151,7 @@ class PlayerController(
                 altCursor++
             }
         }
+        altExhaustedAtMs = SystemClock.elapsedRealtime()
         return null
     }
 
@@ -206,5 +211,8 @@ class PlayerController(
     private companion object {
         /** Each failed proxy costs up to its connect timeout, so a single load only works through a few of them. */
         const val MAX_PROXY_ATTEMPTS = 3
+
+        /** After every ad-free source has failed, wait this long before trying the list again. */
+        const val ALT_RETRY_AFTER_MS = 10 * 60_000L
     }
 }

@@ -109,14 +109,22 @@ data class PlaybackOptions(
 )
 
 /** The client that carries this route's requests, derived from [base] so connection pools and settings are shared. */
-fun PlaybackRoute.clientFor(base: OkHttpClient): OkHttpClient = when (this) {
-    PlaybackRoute.Direct, is PlaybackRoute.CustomUrl -> base
-    is PlaybackRoute.Http -> ProxyClients.build(base, proxy, routing)
-}
+fun PlaybackRoute.clientFor(base: OkHttpClient, customUrlTimeoutMs: Long = ProxyClients.CUSTOM_URL_TIMEOUT_MS): OkHttpClient =
+    when (this) {
+        PlaybackRoute.Direct -> base
+        is PlaybackRoute.CustomUrl -> ProxyClients.withCallTimeout(base, customUrlTimeoutMs)
+        is PlaybackRoute.Http -> ProxyClients.build(base, proxy, routing)
+    }
 
 object ProxyClients {
     /** Short on purpose: a dead proxy should hand over to the next one (or to hiding the ad) in seconds, not minutes. */
     private const val CONNECT_TIMEOUT_SECONDS = 8L
+
+    /** Whole-request limit for a custom proxy playlist; the app's normal 15 s connect / 30 s read would stall far too long. */
+    const val CUSTOM_URL_TIMEOUT_MS = 8_000L
+
+    fun withCallTimeout(base: OkHttpClient, timeoutMs: Long): OkHttpClient =
+        base.newBuilder().callTimeout(timeoutMs, TimeUnit.MILLISECONDS).build()
 
     fun build(base: OkHttpClient, proxy: HttpProxy, routing: ProxyRouting = ProxyRouting.TWITCH): OkHttpClient {
         if (!proxy.isValid) throw IOException("The HTTP proxy needs a host and a port")

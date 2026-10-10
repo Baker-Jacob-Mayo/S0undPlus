@@ -46,6 +46,7 @@ class PlaybackApi(
     private val http: OkHttpClient,
     private val config: TwitchConfig,
     private val random: Random = Random.Default,
+    private val customUrlTimeoutMs: Long = ProxyClients.CUSTOM_URL_TIMEOUT_MS,
 ) {
     /**
      * Resolves a live channel. [options] only matter for ad handling (see [PlaybackRoute]); the default is the plain,
@@ -57,7 +58,7 @@ class PlaybackApi(
         if (route is PlaybackRoute.CustomUrl) {
             // The proxy service fetches the stream itself, so no token is created here and none is sent to it.
             val url = customMasterUrl(route, channel) ?: throw IOException("That proxy URL is not valid")
-            return load(http, url, onNotFound = { ChannelOfflineException(channel) })
+            return load(route.clientFor(http, customUrlTimeoutMs), url, onNotFound = { ChannelOfflineException(channel) })
         }
         val client = route.clientFor(http)
         val platform = PlayerTypes.normalizePlatform(options.platform)

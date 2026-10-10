@@ -178,7 +178,10 @@ class AdBlocker(
                 if (resolved != null) {
                     alt = resolved
                     state = AdState.Swapped
-                } else {
+                } else if (!pending.isCompleted) {
+                    // Timed out while a source was still being tried: give up on it once (a lookup that failed on its
+                    // own has already moved past its source, so it must not be counted twice).
+                    dropPrefetch()
                     onAltFailed()
                 }
             }
