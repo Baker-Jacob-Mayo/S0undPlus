@@ -109,6 +109,10 @@ jobs:
           name: lint-report
           path: app/build/reports/lint-results-release.*
           if-no-files-found: ignore
+      - name: App unit tests
+        run: |
+          set -o pipefail
+          ./gradlew :app:testReleaseUnitTest --console=plain 2>&1 | tee unit.log
       - name: Summary (compact, for quick reading)
         if: always()
         run: |
@@ -117,6 +121,10 @@ jobs:
             echo "--- compiler errors (first 60) ---"
             grep -E "^e: " build.log | sed -E 's#file:///home/runner/work/S0undPlus/S0undPlus/##' | cut -c1-320 | sort -u | head -60 || true
             grep -E "What went wrong" -A4 build.log | head -12 || true
+          fi
+          if [ -f unit.log ]; then
+            echo "--- app unit tests ---"
+            grep -E "FAILED|tests completed|BUILD (SUCCESSFUL|FAILED)" unit.log | head -20 || true
           fi
           cat lint-errors.txt 2>/dev/null || echo "(no lint errors file)"
           cat apk-inspection.txt 2>/dev/null || echo "(no apk inspection)"

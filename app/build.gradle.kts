@@ -78,6 +78,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        // Unit tests cover the app's pure logic; an incidental Android call should return a default, not throw.
+        unitTests.isReturnDefaultValues = true
+    }
+
     lint {
         // Lint runs in CI for TV-specific manifest checks; findings are reported without failing the build.
         abortOnError = false
@@ -114,4 +119,6 @@ dependencies {
     implementation(libs.coil.gif)
     implementation(libs.coil.network.okhttp)
     implementation(libs.zxing.core)
+
+    testImplementation(libs.junit4)
 }

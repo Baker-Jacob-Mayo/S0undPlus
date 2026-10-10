@@ -38,8 +38,8 @@ object Format {
             days < 1 -> "today"
             days == 1L -> "yesterday"
             days < 30 -> "$days days ago"
-            days < 365 -> "${days / 30} months ago"
-            else -> "${days / 365} years ago"
+            days < 365 -> (days / 30).let { if (it == 1L) "1 month ago" else "$it months ago" }
+            else -> (days / 365).let { if (it == 1L) "1 year ago" else "$it years ago" }
         }
     }
 
