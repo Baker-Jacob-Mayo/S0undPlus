@@ -392,6 +392,19 @@ private fun FollowingContent(
                 }
             }
         }
+        if (live.error != null && live.items.isEmpty()) {
+            // Favorites are local, so they show even when Twitch could not be asked who is live: say so, don't hide it.
+            item(key = "live-error", span = { GridItemSpan(maxLineSpan) }) {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Couldn't load who is live: ${live.error.orEmpty()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Palette.Muted,
+                    )
+                    PillButton("Try again", vm::refreshFollowing)
+                }
+            }
+        }
         if (live.items.isNotEmpty()) {
             item(key = "h-live", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Live now") }
             items(live.items, key = { "live:${it.userId}" }) { stream ->
