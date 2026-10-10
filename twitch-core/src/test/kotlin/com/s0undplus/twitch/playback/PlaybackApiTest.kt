@@ -122,4 +122,139 @@ class PlaybackApiTest {
         val e = assertFailsWith<IOException> { api.live("alice") }
         assertTrue(e.message!!.contains("failed integrity check"), e.message)
     }
+
+    // --- ad handling routes ---
+
+    @Test
+    fun customProxyRouteNeverAsksTwitchForATokenAndFillsInTheChannel() = runTest {
+        server.enqueue(text(master))
+        val template = server.url("/proxy/live/\$channel").toString()
+
+        val stream = api.live("Alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template)))
+
+        val request = server.takeRequest()
+        assertEquals(1, server.requestCount) // no GQL call
+        assertEquals("/proxy/live/alice", request.url.encodedPath)
+        for (name in listOf("allow_source", "allow_audio_only", "fast_bread", "include_unavailable")) {
+            assertEquals("true", request.url.queryParameter(name), name)
+        }
+        assertEquals("h264", request.url.queryParameter("supported_codecs"))
+        assertEquals(null, request.url.queryParameter("sig"))
+        assertEquals(null, request.url.queryParameter("token"))
+        assertEquals(request.url.toString(), stream.masterUrl)
+        assertEquals(listOf("1080p60 (source)"), stream.variants.map { it.name })
+    }
+
+    @Test
+    fun customProxyKeepsParametersTheUserAlreadySet() = runTest {
+        server.enqueue(text(master))
+        val template = server.url("/p/\$channel?fast_bread=false&foo=bar").toString()
+        api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template)))
+        val url = server.takeRequest().url
+        assertEquals("false", url.queryParameter("fast_bread"))
+        assertEquals("bar", url.queryParameter("foo"))
+        assertEquals("true", url.queryParameter("allow_source"))
+    }
+
+    @Test
+    fun customProxyWithoutExtraParamsIsRequestedAsWritten() = runTest {
+        server.enqueue(text(master))
+        val template = server.url("/p/\$channel?foo=bar").toString()
+        api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template, addQueryParams = false)))
+        assertEquals(setOf("foo"), server.takeRequest().url.queryParameterNames)
+    }
+
+    @Test
+    fun customProxy404MeansOfflineAndBadTemplatesFailClearly() = runTest {
+        server.enqueue(text("{}", 404))
+        val template = server.url("/p/\$channel").toString()
+        assertFailsWith<ChannelOfflineException> {
+            api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template)))
+        }
+        val e = assertFailsWith<IOException> {
+            api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl("http://bad host/\$channel")))
+        }
+        assertTrue(e.message!!.contains("not valid"), e.message)
+    }
+
+    @Test
+    fun playerTypeAndPlatformAreSentWithTheTokenRequest() = runTest {
+        server.enqueue(json(tokenResponse))
+        server.enqueue(text(master))
+
+        api.live("alice", PlaybackOptions(playerType = PlayerTypes.AUTOPLAY, platform = PlayerTypes.ANDROID))
+
+        val vars = Json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject["variables"]!!.jsonObject
+        assertEquals("autoplay", vars["playerType"]?.jsonPrimitive?.content)
+        assertEquals("android", vars["platform"]?.jsonPrimitive?.content)
+        assertEquals("android", server.takeRequest().url.queryParameter("platform"))
+    }
+
+    @Test
+    fun unknownPlayerTypeIsReplacedByTheDefaultBeforeItReachesTwitch() = runTest {
+        server.enqueue(json(tokenResponse))
+        server.enqueue(text(master))
+        api.live("alice", PlaybackOptions(playerType = "made-up", platform = "toaster"))
+        val vars = Json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject["variables"]!!.jsonObject
+        assertEquals("site", vars["playerType"]?.jsonPrimitive?.content)
+        assertEquals("web", vars["platform"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun relativeVariantUrlsFromAProxyAreMadeAbsolute() = runTest {
+        server.enqueue(
+            text(
+                """
+                #EXTM3U
+                #EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=1280x720
+                variants/720p.m3u8
+                """.trimIndent(),
+            ),
+        )
+        val template = server.url("/p/\$channel").toString()
+        val stream = api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template)))
+        assertEquals(server.url("/p/variants/720p.m3u8").toString(), stream.variants.single().url)
+    }
+
+    @Test
+    fun httpProxyRouteSendsOnlyTheTogglesOptedIntoThroughTheProxy() = runTest {
+        // The "Twitch" hosts are the real names, which are never resolved because the proxy carries those requests.
+        val viaProxy = MockWebServer().also { it.start() }
+        try {
+            viaProxy.enqueue(text(master)) // the playlist, via the proxy; the token goes direct to [server]
+            server.enqueue(json(tokenResponse))
+            val config = configFor(server).copy(usherUrl = "http://usher.ttvnw.net")
+            val proxied = PlaybackApi(testHttp(), config, Random(1))
+            val proxy = HttpProxy(viaProxy.hostName, viaProxy.port, proxyToken = false, proxyMultivariant = true, proxyMedia = false)
+
+            val stream = proxied.live("alice", PlaybackOptions(route = PlaybackRoute.Http(proxy)))
+
+            assertEquals("/gql", server.takeRequest().url.encodedPath)
+            val line = viaProxy.takeRequest().requestLine
+            assertTrue(line.startsWith("GET http://usher.ttvnw.net/api/v2/channel/hls/alice.m3u8?"), line)
+            assertEquals(listOf("1080p60 (source)"), stream.variants.map { it.name })
+        } finally {
+            viaProxy.close()
+        }
+    }
+
+    @Test
+    fun httpProxyCanCarryTheTokenRequestToo() = runTest {
+        val viaProxy = MockWebServer().also { it.start() }
+        try {
+            viaProxy.enqueue(json(tokenResponse))
+            viaProxy.enqueue(text(master))
+            val config = configFor(server).copy(gqlUrl = "http://gql.twitch.tv/gql", usherUrl = "http://usher.ttvnw.net")
+            val proxied = PlaybackApi(testHttp(), config, Random(1))
+            val proxy = HttpProxy(viaProxy.hostName, viaProxy.port, proxyToken = true, proxyMultivariant = true, proxyMedia = false)
+
+            proxied.live("alice", PlaybackOptions(route = PlaybackRoute.Http(proxy)))
+
+            assertEquals("POST http://gql.twitch.tv/gql HTTP/1.1", viaProxy.takeRequest().requestLine)
+            assertTrue(viaProxy.takeRequest().requestLine.startsWith("GET http://usher.ttvnw.net/"))
+            assertEquals(0, server.requestCount)
+        } finally {
+            viaProxy.close()
+        }
+    }
 }

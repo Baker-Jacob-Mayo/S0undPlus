@@ -47,21 +47,38 @@ class PlaybackApi(
     private val config: TwitchConfig,
     private val random: Random = Random.Default,
 ) {
-    suspend fun live(login: String): PlaybackStream {
+    /**
+     * Resolves a live channel. [options] only matter for ad handling (see [PlaybackRoute]); the default is the plain,
+     * direct request.
+     */
+    suspend fun live(login: String, options: PlaybackOptions = PlaybackOptions()): PlaybackStream {
         val channel = login.lowercase(Locale.ROOT)
-        val token = requestToken(isLive = true, login = channel, vodId = "")
-        val url = liveMasterUrl(channel, token)
-        return load(url, onNotFound = { ChannelOfflineException(channel) })
+        val route = options.route
+        if (route is PlaybackRoute.CustomUrl) {
+            // The proxy service fetches the stream itself, so no token is created here and none is sent to it.
+            val url = customMasterUrl(route, channel) ?: throw IOException("That proxy URL is not valid")
+            return load(http, url, onNotFound = { ChannelOfflineException(channel) })
+        }
+        val client = route.clientFor(http)
+        val platform = PlayerTypes.normalizePlatform(options.platform)
+        val token = requestToken(
+            client, isLive = true, login = channel, vodId = "",
+            playerType = options.playerType, platform = platform,
+        )
+        return load(client, liveMasterUrl(channel, token, platform), onNotFound = { ChannelOfflineException(channel) })
     }
 
     suspend fun vod(videoId: String): PlaybackStream {
-        val token = requestToken(isLive = false, login = "", vodId = videoId)
-        return load(vodMasterUrl(videoId, token), onNotFound = { IOException("VOD $videoId is not available") })
+        val token = requestToken(
+            http, isLive = false, login = "", vodId = videoId,
+            playerType = PlayerTypes.SITE, platform = PlayerTypes.WEB,
+        )
+        return load(http, vodMasterUrl(videoId, token), onNotFound = { IOException("VOD $videoId is not available") })
     }
 
-    internal fun liveMasterUrl(login: String, token: PlaybackToken): HttpUrl =
+    internal fun liveMasterUrl(login: String, token: PlaybackToken, platform: String = PlayerTypes.WEB): HttpUrl =
         "${config.usherUrl}/api/v2/channel/hls/$login.m3u8".toHttpUrl().newBuilder()
-            .commonParams()
+            .commonParams(platform)
             .addQueryParameter("fast_bread", "true") // low-latency
             .addQueryParameter("sig", token.signature)
             .addQueryParameter("token", token.value)
@@ -69,27 +86,47 @@ class PlaybackApi(
 
     internal fun vodMasterUrl(videoId: String, token: PlaybackToken): HttpUrl =
         "${config.usherUrl}/vod/v2/$videoId.m3u8".toHttpUrl().newBuilder()
-            .commonParams()
+            .commonParams(PlayerTypes.WEB)
             .addQueryParameter("nauthsig", token.signature)
             .addQueryParameter("nauth", token.value)
             .build()
 
-    private fun HttpUrl.Builder.commonParams(): HttpUrl.Builder = this
+    /**
+     * The user's proxy URL with `$channel` filled in and, if asked, the playlist options usher is normally sent.
+     * Parameters the user already put in the URL win, so a proxy that wants its own `fast_bread` value keeps it.
+     */
+    internal fun customMasterUrl(route: PlaybackRoute.CustomUrl, login: String): HttpUrl? {
+        val base = ProxyUrls.expand(route.template, login) ?: return null
+        if (!route.addQueryParams) return base
+        val builder = base.newBuilder()
+        fun addIfAbsent(name: String, value: String) {
+            if (base.queryParameter(name) == null) builder.addQueryParameter(name, value)
+        }
+        addIfAbsent("allow_source", "true")
+        addIfAbsent("allow_audio_only", "true")
+        addIfAbsent("fast_bread", "true")
+        addIfAbsent("include_unavailable", "true")
+        addIfAbsent("supported_codecs", "h264")
+        return builder.build()
+    }
+
+    private fun HttpUrl.Builder.commonParams(platform: String): HttpUrl.Builder = this
         .addQueryParameter("allow_source", "true")
         .addQueryParameter("allow_audio_only", "true")
         .addQueryParameter("playlist_include_framerate", "true")
-        .addQueryParameter("platform", "web")
+        .addQueryParameter("platform", platform)
         // H.264 only: every TV decodes it; HEVC/AV1 rungs are a coin-flip on cheap Google TV boxes.
         .addQueryParameter("supported_codecs", "h264")
         .addQueryParameter("p", random.nextInt(0, 9_999_999).toString())
 
-    private suspend fun load(url: HttpUrl, onNotFound: () -> IOException): PlaybackStream {
+    private suspend fun load(client: OkHttpClient, url: HttpUrl, onNotFound: () -> IOException): PlaybackStream {
         val request = Request.Builder().url(url).build()
-        http.newCall(request).await().use { response ->
+        client.newCall(request).await().use { response ->
             val text = response.body.string()
             if (response.code == 404) throw onNotFound()
             if (!response.isSuccessful) throw TwitchApiException(response.code, "Playlist request failed", text)
-            val variants = MasterPlaylist.parse(text)
+            // A rewriting proxy may hand back relative rung URLs; make them absolute so each plays on its own.
+            val variants = MasterPlaylist.parse(text).map { it.copy(url = url.resolve(it.url)?.toString() ?: it.url) }
             if (variants.isEmpty()) throw IOException("Twitch returned a playlist with no qualities")
             return PlaybackStream(url.toString(), variants)
         }
@@ -99,14 +136,21 @@ class PlaybackApi(
      * Asks for a token with the full query text first (robust to Twitch rotating persisted-query hashes) and falls
      * back to the persisted-query form the web player itself sends.
      */
-    internal suspend fun requestToken(isLive: Boolean, login: String, vodId: String): PlaybackToken {
+    internal suspend fun requestToken(
+        client: OkHttpClient,
+        isLive: Boolean,
+        login: String,
+        vodId: String,
+        playerType: String,
+        platform: String,
+    ): PlaybackToken {
         val variables = buildJsonObject {
             put("isLive", isLive)
             put("login", login)
             put("isVod", !isLive)
             put("vodID", vodId)
-            put("playerType", "site")
-            put("platform", "web")
+            put("playerType", PlayerTypes.normalize(playerType))
+            put("platform", platform)
         }
         val attempts = listOf(
             buildJsonObject {
@@ -128,7 +172,7 @@ class PlaybackApi(
         var lastFailure: IOException? = null
         for (body in attempts) {
             try {
-                return postGql(body, isLive)
+                return postGql(client, body, isLive)
             } catch (e: TwitchApiException) {
                 lastFailure = e
             } catch (e: GqlTokenException) {
@@ -140,14 +184,14 @@ class PlaybackApi(
 
     private class GqlTokenException(message: String) : IOException(message)
 
-    private suspend fun postGql(body: JsonObject, isLive: Boolean): PlaybackToken {
+    private suspend fun postGql(client: OkHttpClient, body: JsonObject, isLive: Boolean): PlaybackToken {
         val request = Request.Builder()
             .url(config.gqlUrl)
             .header("Client-ID", config.webClientId)
             .header("X-Device-Id", config.deviceId)
             .post(body.toString().toRequestBody(JSON))
             .build()
-        http.newCall(request).await().use { response ->
+        client.newCall(request).await().use { response ->
             val text = response.body.string()
             if (!response.isSuccessful) throw TwitchApiException(response.code, "GQL request failed", text)
             val root = TwitchJson.parseToJsonElement(text)
