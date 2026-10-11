@@ -33,7 +33,7 @@ for path in files:
         elif problem is not None:
             failed += 1
             print(f"FAIL  {name} ({seconds}s)")
-            for line in (problem.text or problem.get("message") or "").splitlines()[:30]:
+            for line in (problem.text or problem.get("message") or "").splitlines()[:60]:
                 print(f"      {line}")
         else:
             passed += 1
@@ -43,7 +43,7 @@ print(f"--- {passed} passed, {failed} failed, {skipped} skipped ---")
 print("\n=== logcat: crashes and the app's own messages ===")
 logcat = "emulator-results/logcat.txt"
 if os.path.exists(logcat):
-    interesting = re.compile(r"FATAL EXCEPTION|AndroidRuntime|Process: com\.s0undplus|ComposeTestRule|Screenshots|StrictMode|ANR in")
+    interesting = re.compile(r"FATAL EXCEPTION|AndroidRuntime|Process: com\.s0undplus|ComposeTestRule|Screenshots|StrictMode|ANR in|TestLog")
     lines = [l.rstrip() for l in open(logcat, errors="replace") if interesting.search(l)]
     for l in lines[-80:]:
         print(l[:300])

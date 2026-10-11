@@ -1,0 +1,140 @@
+package com.s0undplus.tv.ui
+
+import android.view.KeyEvent
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.s0undplus.tv.HermeticRule
+import com.s0undplus.tv.MainActivity
+import com.s0undplus.tv.Screenshots
+import com.s0undplus.tv.SignedInRule
+import com.s0undplus.tv.awaitCondition
+import com.s0undplus.tv.data.AdMode
+import com.s0undplus.tv.openSettingsTab
+import com.s0undplus.tv.press
+import com.s0undplus.tv.pressBack
+import com.s0undplus.tv.pressDown
+import com.s0undplus.tv.pressSelect
+import com.s0undplus.tv.pressUntilFocused
+import com.s0undplus.tv.testContainer
+import com.s0undplus.tv.waitForNoNode
+import com.s0undplus.tv.waitForNode
+import com.s0undplus.tv.waitForText
+import com.s0undplus.twitch.TwitchLanguages
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/** Settings as a viewer uses them: reached and driven with the remote, checked against what is actually stored. */
+@RunWith(AndroidJUnit4::class)
+class SettingsTest {
+    @get:Rule(order = 0) val hermetic = HermeticRule()
+    @get:Rule(order = 1) val signedIn = SignedInRule()
+    @get:Rule(order = 2) val compose = createAndroidComposeRule<MainActivity>()
+
+    private fun stored() = runBlocking { testContainer.settings.settings.first() }
+    private val dialog = hasTestTag("languageDialog")
+
+    private fun openLanguageDialog() {
+        compose.openSettingsTab()
+        compose.pressDown() // from the tab row onto the first settings row
+        compose.pressUntilFocused(KeyEvent.KEYCODE_DPAD_DOWN, hasText("Language row"))
+        compose.pressSelect()
+        compose.waitForNode(dialog, description = "the language dialog")
+    }
+
+    @Test
+    fun languageDialogKeepsTheDpadInsideItAtBothEndsAndBackClosesIt() {
+        openLanguageDialog()
+        // The dialog starts on the ticked language.
+        compose.waitForNode(hasText("English") and isFocused() and hasAnyAncestor(dialog), description = "focus on English in the dialog")
+
+        // More presses than there are languages, in each direction: focus may stop at an end but must never leave.
+        val presses = TwitchLanguages.ALL.size + 10
+        repeat(presses) {
+            compose.press(KeyEvent.KEYCODE_DPAD_UP)
+            compose.onNode(isFocused()).assert(hasAnyAncestor(dialog))
+        }
+        compose.onNode(isFocused()).assert(hasText("English"))
+        repeat(presses) {
+            compose.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNode(isFocused()).assert(hasAnyAncestor(dialog))
+        }
+        compose.onNode(isFocused()).assert(hasText(TwitchLanguages.ALL.last().second))
+        Screenshots.capture("language-dialog-bottom")
+
+        compose.pressBack()
+        compose.waitForNoNode(dialog, description = "the language dialog")
+        // Back closed only the dialog: still on Settings, nothing was chosen.
+        compose.onNodeWithText("Show clock").assertIsDisplayed()
+        assertEquals("en", stored().language)
+    }
+
+    @Test
+    fun pickingALanguageSavesIt() {
+        openLanguageDialog()
+        compose.pressDown()
+        compose.pressSelect()
+        compose.waitForNoNode(dialog, description = "the language dialog")
+        awaitCondition("the chosen language is stored") { stored().language == "es" }
+        compose.waitForNode(hasText("Español"), description = "the new language shown on the Settings row")
+    }
+
+    @Test
+    fun aToggleIsSavedAndTheSecondPressUndoesIt() {
+        compose.openSettingsTab()
+        compose.onNodeWithText("Show clock").performClick()
+        awaitCondition("show clock stored as on") { stored().showClock }
+        compose.onNodeWithText("Show clock").performClick()
+        awaitCondition("show clock stored as off") { !stored().showClock }
+    }
+
+    @Test
+    fun aTypedBlockedWordIsSavedAndStillThereAfterScrollingAwayAndBack() {
+        compose.openSettingsTab()
+        val list = compose.onNode(hasScrollToNodeAction())
+        val label = hasText("Blocked words (comma separated)")
+        list.performScrollToNode(label)
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("spoiler")
+        awaitCondition("the blocked word is stored") { stored().blockedWords == "spoiler" }
+
+        // Far enough away that the text field leaves composition, then back: it must show what was saved, not the
+        // value it was first built with (the regression the "saveable" state fixed).
+        list.performScrollToNode(hasText("About"))
+        compose.waitForIdle()
+        list.performScrollToNode(label)
+        compose.onAllNodes(hasSetTextAction())[0].assert(hasText("spoiler"))
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("spoiler, giveaway")
+        awaitCondition("the edited list is stored") { stored().blockedWords == "spoiler, giveaway" }
+    }
+
+    @Test
+    fun adHandlingStepsThroughTheModesAndShowsTheProxyListInProxyMode() {
+        compose.openSettingsTab()
+        val list = compose.onNode(hasScrollToNodeAction())
+        list.performScrollToNode(hasText("Ad handling"))
+        assertEquals(AdMode.OFF, stored().adMode)
+        compose.onNodeWithText("Ad handling").performClick() // Off -> Hide
+        awaitCondition("ad mode Hide stored") { stored().adMode == AdMode.HIDE }
+        compose.waitForText("Hide ads (mute and black out)")
+        compose.onNodeWithText("Ad handling").performClick() // Hide -> proxy URLs
+        awaitCondition("ad mode proxy URLs stored") { stored().adMode == AdMode.PROXY }
+        list.performScrollToNode(hasText("eu.luminous.dev"))
+        compose.onNodeWithText("eu.luminous.dev").assertIsDisplayed()
+        Screenshots.capture("settings-ads-proxy-mode")
+    }
+}

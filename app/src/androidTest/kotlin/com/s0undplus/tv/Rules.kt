@@ -48,3 +48,15 @@ class SignedInRule(private val configure: (AppSettings) -> AppSettings = { it })
         testContainer.session.signOut()
     }
 }
+
+/** Starts the activity with nobody signed in (so the login screen shows), and leaves nobody signed in afterwards. */
+class SignedOutRule : ExternalResource() {
+    override fun before() = runBlocking {
+        testContainer.settings.update { AppSettings(autoUpdateCheck = false) }
+        testContainer.session.signOut()
+    }
+
+    override fun after() = runBlocking {
+        testContainer.session.signOut()
+    }
+}

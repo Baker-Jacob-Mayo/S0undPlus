@@ -37,6 +37,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.MaterialTheme
@@ -457,6 +458,7 @@ private fun LanguageDialog(current: String, onPick: (String) -> Unit, onDismiss:
     Box(Modifier.fillMaxSize().background(Palette.Scrim), contentAlignment = Alignment.Center) {
         Column(
             Modifier
+                .testTag("languageDialog")
                 // The D-pad must not wander out to the settings rows behind the scrim.
                 .focusProperties { exit = { FocusRequester.Cancel } }
                 .focusGroup()
