@@ -31,20 +31,33 @@ fun ComposeTestRule.dump(maxChars: Int = 3500): String =
 
 fun ComposeTestRule.waitForText(text: String, timeoutMs: Long = 30_000) = waitForNode(hasText(text), timeoutMs, "text \"$text\"")
 
+/**
+ * Waits up to [timeoutMs] of *real* time (letting compose run) for [condition]. compose's own `waitUntil` timeout is
+ * counted on the test clock, which runs several times faster than the wall clock while waiting, so a "60 second" wait
+ * could be over in ten: not enough for anything that really takes time, like an ad break passing through a player.
+ */
+fun ComposeTestRule.waitRealTime(timeoutMs: Long, condition: () -> Boolean): Boolean {
+    val deadline = System.nanoTime() + timeoutMs * 1_000_000
+    waitUntil(timeoutMillis = 30 * 60_000L) { condition() || System.nanoTime() >= deadline }
+    return condition()
+}
+
 fun ComposeTestRule.waitForNode(matcher: SemanticsMatcher, timeoutMs: Long = 30_000, description: String = matcher.description) {
-    try {
-        waitUntil(timeoutMillis = timeoutMs) { onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+    val found = try {
+        waitRealTime(timeoutMs) { onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
     } catch (e: Throwable) {
-        throw AssertionError("Timed out after ${timeoutMs}ms waiting for $description. Screen:\n${dump()}", e)
+        throw AssertionError("Failed while waiting for $description: ${e.javaClass.simpleName}. Screen:\n${dump()}", e)
     }
+    if (!found) throw AssertionError("Timed out after ${timeoutMs}ms waiting for $description. Screen:\n${dump()}")
 }
 
 fun ComposeTestRule.waitForNoNode(matcher: SemanticsMatcher, timeoutMs: Long = 10_000, description: String = matcher.description) {
-    try {
-        waitUntil(timeoutMillis = timeoutMs) { onAllNodes(matcher).fetchSemanticsNodes().isEmpty() }
+    val gone = try {
+        waitRealTime(timeoutMs) { onAllNodes(matcher).fetchSemanticsNodes().isEmpty() }
     } catch (e: Throwable) {
-        throw AssertionError("Timed out after ${timeoutMs}ms waiting for $description to go away. Screen:\n${dump()}", e)
+        throw AssertionError("Failed while waiting for $description to go away: ${e.javaClass.simpleName}. Screen:\n${dump()}", e)
     }
+    if (!gone) throw AssertionError("Timed out after ${timeoutMs}ms waiting for $description to go away. Screen:\n${dump()}")
 }
 
 /** Presses [keyCode] until the focused node matches [target], at most [maxPresses] times. */

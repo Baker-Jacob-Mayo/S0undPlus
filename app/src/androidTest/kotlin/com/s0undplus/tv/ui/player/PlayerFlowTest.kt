@@ -64,12 +64,14 @@ class PlayerHideAdsTest {
 
         FakeStreams.startAd()
         compose.waitForNode(hasText("Ad break — hidden", substring = true), timeoutMs = 60_000, description = "the ad-hidden notice")
+        compose.pause(800) // let the cover actually be drawn before looking at the screen
         Screenshots.capture("player-ad-hidden")
 
         FakeStreams.endAd()
         compose.waitForNoNode(AD_TEXT, timeoutMs = 60_000, description = "the ad notice to go away")
         val before = segmentsFetched("live")
         compose.awaitSegments("live", 2, since = before)
+        compose.pause(800)
         Screenshots.capture("player-after-ad")
     }
 }
@@ -92,12 +94,14 @@ class PlayerSwapAdsTest {
         compose.waitForNode(hasText("Ad break — playing an ad-free copy"), timeoutMs = 60_000, description = "the ad-free-copy notice")
         assertTrue("the ad-free copy was asked for with the Android platform", FakeStreams.masterRequests.any { it.endsWith("android") })
         compose.awaitSegments("alt", 2)
+        compose.pause(800)
         Screenshots.capture("player-ad-swapped")
 
         FakeStreams.endAd()
         compose.waitForNoNode(AD_TEXT, timeoutMs = 60_000, description = "the ad notice to go away")
         val before = segmentsFetched("live")
         compose.awaitSegments("live", 2, since = before)
+        compose.pause(800)
         Screenshots.capture("player-after-swap")
     }
 }
