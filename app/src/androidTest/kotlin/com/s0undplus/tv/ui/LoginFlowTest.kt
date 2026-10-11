@@ -5,8 +5,10 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.s0undplus.tv.FailureCapture
 import com.s0undplus.tv.HermeticRule
 import com.s0undplus.tv.MainActivity
+import com.s0undplus.tv.dump
 import com.s0undplus.tv.Screenshots
 import com.s0undplus.tv.SignedOutRule
 import com.s0undplus.tv.awaitCondition
@@ -52,6 +54,7 @@ class LoginFlowTest {
     @get:Rule(order = 1) val login = FakeLogin()
     @get:Rule(order = 2) val signedOut = SignedOutRule()
     @get:Rule(order = 3) val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 99) val capture = FailureCapture { compose.dump(8000) }
 
     @Test
     fun showsTheCodeAndSignsInOnceTheViewerApprovesIt() {

@@ -11,6 +11,17 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
+print("\n=== screenshots (JPEG, base64; decode to view) ===")
+shots = sorted(glob.glob("app/build/outputs/**/*.jpg", recursive=True))
+if not shots:
+    print("(none)")
+for shot in shots[:12]:
+    data = base64.b64encode(open(shot, "rb").read()).decode()
+    print(f"SCREENSHOT-BEGIN {os.path.basename(shot)}")
+    print(data)
+    print("SCREENSHOT-END")
+
+
 passed = failed = skipped = 0
 print("=== emulator test results ===")
 files = sorted(glob.glob("app/build/outputs/androidTest-results/**/TEST-*.xml", recursive=True))
@@ -40,26 +51,16 @@ for path in files:
             print(f"PASS  {name} ({seconds}s)")
 print(f"--- {passed} passed, {failed} failed, {skipped} skipped ---")
 
-print("\n=== logcat: crashes and the app's own messages ===")
+print("\n=== logcat: crashes, test diagnostics, the app's own messages ===")
 logcat = "emulator-results/logcat.txt"
 if os.path.exists(logcat):
-    interesting = re.compile(r"FATAL EXCEPTION|AndroidRuntime|Process: com\.s0undplus|ComposeTestRule|Screenshots|StrictMode|ANR in|TestLog")
+    interesting = re.compile(r"FATAL EXCEPTION|Process: com\.s0undplus|Screenshots|ANR in| TestLog")
     lines = [l.rstrip() for l in open(logcat, errors="replace") if interesting.search(l)]
-    for l in lines[-80:]:
+    for l in lines[-120:]:
         print(l[:300])
     if not lines:
         print("(nothing notable)")
 else:
     print("(no logcat file)")
-
-print("\n=== screenshots (JPEG, base64; decode to view) ===")
-shots = sorted(glob.glob("app/build/outputs/**/*.jpg", recursive=True))
-if not shots:
-    print("(none)")
-for shot in shots[:12]:
-    data = base64.b64encode(open(shot, "rb").read()).decode()
-    print(f"SCREENSHOT-BEGIN {os.path.basename(shot)}")
-    print(data)
-    print("SCREENSHOT-END")
 
 sys.exit(0)

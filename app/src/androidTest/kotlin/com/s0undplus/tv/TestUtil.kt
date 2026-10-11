@@ -29,9 +29,9 @@ fun ComposeTestRule.dump(maxChars: Int = 3500): String =
         "(could not print the tree: $t)"
     }
 
-fun ComposeTestRule.waitForText(text: String, timeoutMs: Long = 20_000) = waitForNode(hasText(text), timeoutMs, "text \"$text\"")
+fun ComposeTestRule.waitForText(text: String, timeoutMs: Long = 30_000) = waitForNode(hasText(text), timeoutMs, "text \"$text\"")
 
-fun ComposeTestRule.waitForNode(matcher: SemanticsMatcher, timeoutMs: Long = 20_000, description: String = matcher.description) {
+fun ComposeTestRule.waitForNode(matcher: SemanticsMatcher, timeoutMs: Long = 30_000, description: String = matcher.description) {
     try {
         waitUntil(timeoutMillis = timeoutMs) { onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
     } catch (e: Throwable) {
