@@ -12,7 +12,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 print("\n=== screenshots (JPEG, base64; decode to view) ===")
-shots = sorted(glob.glob("app/build/outputs/**/*.jpg", recursive=True))
+shots = sorted(glob.glob("emulator-results/run-1/**/*.jpg", recursive=True)) or sorted(glob.glob("app/build/outputs/**/*.jpg", recursive=True))
 if not shots:
     print("(none)")
 for shot in shots[:12]:
@@ -24,7 +24,9 @@ for shot in shots[:12]:
 
 passed = failed = skipped = 0
 print("=== emulator test results ===")
-files = sorted(glob.glob("app/build/outputs/androidTest-results/**/TEST-*.xml", recursive=True))
+files = sorted(glob.glob("emulator-results/run-*/**/TEST-*.xml", recursive=True)) or sorted(
+    glob.glob("app/build/outputs/androidTest-results/**/TEST-*.xml", recursive=True)
+)
 if not files:
     print("No result files: the tests did not run to completion. Gradle log tail:")
     log = "emulator-results/gradle.log"
@@ -33,7 +35,8 @@ if not files:
 for path in files:
     root = ET.parse(path).getroot()
     for case in root.iter("testcase"):
-        name = f'{case.get("classname")}.{case.get("name")}'
+        run = re.search(r"run-(\d+)", path)
+        name = f'{("[run " + run.group(1) + "] ") if run else ""}{case.get("classname")}.{case.get("name")}'
         seconds = case.get("time", "?")
         problem = case.find("failure")
         if problem is None:

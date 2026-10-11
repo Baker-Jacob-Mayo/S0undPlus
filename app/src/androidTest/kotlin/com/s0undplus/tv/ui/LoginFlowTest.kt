@@ -78,6 +78,7 @@ class LoginFlowTest {
         compose.waitForNode(hasText("Try again"))
         val before = FakeTwitch.requestsMatching("POST /oauth2/device").size
         compose.onNodeWithText("Try again").performClick()
-        awaitCondition("a second device code was requested") { FakeTwitch.requestsMatching("POST /oauth2/device").size > before }
+        // Waits through the compose rule: it is what lets the click's recomposition (and the restarted login effect) run.
+        compose.waitUntil(timeoutMillis = 15_000) { FakeTwitch.requestsMatching("POST /oauth2/device").size > before }
     }
 }
