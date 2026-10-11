@@ -119,6 +119,27 @@ class AdBreakDetectorTest {
     }
 
     @Test
+    fun plannedDurationComesFromTheStitchedAdDaterangeCoveringTheEdge() {
+        val tag = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",DURATION=30.000""")
+        assertEquals(30_000L, AdBreakDetector.plannedDurationMs(view(tags = listOf(tag))))
+        val planned = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",PLANNED-DURATION=15.5""")
+        assertEquals(15_500L, AdBreakDetector.plannedDurationMs(view(tags = listOf(planned))))
+    }
+
+    @Test
+    fun noPlannedDurationWhenThereIsNoneOrItIsNotUsable() {
+        val unrelated = range("""ID="splice-1",START-DATE="2026-01-01T12:00:00Z",DURATION=30""")
+        val stale = range("""ID="stitched-ad-1",START-DATE="2026-01-01T11:00:00Z",DURATION=30""")
+        val openEnded = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z"""")
+        val absurd = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",DURATION=100000""")
+        val zero = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",DURATION=0""")
+        for (tag in listOf(unrelated, stale, openEnded, absurd, zero)) {
+            assertEquals(null, AdBreakDetector.plannedDurationMs(view(tags = listOf(tag))), tag)
+        }
+        assertEquals(null, AdBreakDetector.plannedDurationMs(view(title = "Amazon|1")))
+    }
+
+    @Test
     fun datesSoFarOutThatTheyOverflowNeverCrashDetection() {
         val farFuture = range("""ID="stitched-ad-1",START-DATE="+999999999-12-31T23:59:59Z",DURATION=30""")
         val farPast = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",END-DATE="-999999999-01-01T00:00:00Z"""")
@@ -300,6 +321,28 @@ class AdBreakPlannerTest {
 
         planner.onObservation(40_000, true, 0) // the playlist is readable again and the ad is still there
         assertEquals(AdBreakPlanner.Action.Enter, planner.poll(40_000))
+    }
+
+    @Test
+    fun remainingTimeCountsDownFromWhenTheViewerReachedTheAdAndOnlyWhileItIsActive() {
+        assertEquals(null, planner.remainingMs(0))
+        planner.onObservation(0, true, 2_000, plannedDurationMs = 30_000)
+        assertEquals(null, planner.remainingMs(500)) // the viewer hasn't reached the ad yet
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(1_500))
+        assertEquals(30_000L, planner.remainingMs(1_500))
+        planner.onObservation(10_000, true, 2_000, plannedDurationMs = 30_000)
+        assertEquals(21_500L, planner.remainingMs(10_000))
+        assertEquals(0L, planner.remainingMs(60_000)) // never negative
+        planner.onObservation(10_000, false, 2_000)
+        assertEquals(AdBreakPlanner.Action.Exit, planner.poll(12_000))
+        assertEquals(null, planner.remainingMs(12_000))
+    }
+
+    @Test
+    fun noRemainingTimeWhenThePlaylistNeverSaidHowLongTheBreakLasts() {
+        planner.onObservation(0, true, 0)
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(0))
+        assertEquals(null, planner.remainingMs(1_000))
     }
 
     @Test

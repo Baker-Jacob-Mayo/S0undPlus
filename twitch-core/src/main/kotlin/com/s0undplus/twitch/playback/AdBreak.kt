@@ -40,6 +40,25 @@ object AdBreakDetector {
 
     fun isAdAtEdge(view: MediaPlaylistView): Boolean = titleSaysAd(view.newestSegmentTitle) || daterangeSaysAd(view)
 
+    /**
+     * How long the ad break at the edge is planned to last, when the playlist says so: the `DURATION` (or
+     * `PLANNED-DURATION`) of the stitched-ad `DATERANGE` that covers the newest segment. Null when there is none, or it
+     * is not a usable number; callers show no countdown then.
+     */
+    fun plannedDurationMs(view: MediaPlaylistView): Long? {
+        for (tag in view.tags) {
+            if (!tag.startsWith("#EXT-X-DATERANGE:")) continue
+            val attrs = MasterPlaylist.parseAttributes(tag.substringAfter(':'))
+            if (!isStitchedAd(attrs) || !coversNewestSegment(attrs, view)) continue
+            val seconds = (attrs["DURATION"] ?: attrs["PLANNED-DURATION"])?.toDoubleOrNull() ?: continue
+            if (seconds.isNaN() || seconds <= 0 || seconds > MAX_PLAUSIBLE_BREAK_SECONDS) continue
+            return (seconds * 1000).toLong()
+        }
+        return null
+    }
+
+    private const val MAX_PLAUSIBLE_BREAK_SECONDS = 600.0
+
     private fun titleSaysAd(title: String?): Boolean {
         val provider = title?.substringBefore('|')?.trim()?.lowercase() ?: return false
         return provider in AD_TITLES
@@ -49,13 +68,15 @@ object AdBreakDetector {
         for (tag in view.tags) {
             if (!tag.startsWith("#EXT-X-DATERANGE:")) continue
             val attrs = MasterPlaylist.parseAttributes(tag.substringAfter(':'))
-            val marked = attrs["ID"]?.startsWith("stitched-ad", ignoreCase = true) == true ||
-                attrs["CLASS"].equals("twitch-stitched-ad", ignoreCase = true) ||
-                attrs.keys.any { it.startsWith("X-TV-TWITCH-AD", ignoreCase = true) }
-            if (marked && coversNewestSegment(attrs, view)) return true
+            if (isStitchedAd(attrs) && coversNewestSegment(attrs, view)) return true
         }
         return false
     }
+
+    private fun isStitchedAd(attrs: Map<String, String>): Boolean =
+        attrs["ID"]?.startsWith("stitched-ad", ignoreCase = true) == true ||
+            attrs["CLASS"].equals("twitch-stitched-ad", ignoreCase = true) ||
+            attrs.keys.any { it.startsWith("X-TV-TWITCH-AD", ignoreCase = true) }
 
     /**
      * Playlists keep old DATERANGE tags for as long as their segments are retained, so a tag only counts while its
@@ -220,13 +241,24 @@ class AdBreakPlanner(
     private var firstCleanSeenMs: Long? = null
     private var pendingEnterAtMs: Long? = null
     private var pendingExitAtMs: Long? = null
+    private var plannedBreakMs: Long? = null
+
+    /**
+     * Time left in the break the viewer is in, if the playlist said how long it lasts; null when no break is active
+     * or no duration is known. Counted from the moment the viewer reached the ad, so it is an estimate.
+     */
+    fun remainingMs(nowMs: Long): Long? {
+        val planned = plannedBreakMs ?: return null
+        return if (isActive) maxOf(0L, planned - (nowMs - activeSinceMs)) else null
+    }
 
     /**
      * @param adAtEdge result of [AdBreakDetector.isAdAtEdge] for the newest playlist
      * @param liveOffsetMs how far behind the live edge the viewer is, or null if the player can't say; values outside
      * 0..[MAX_PLAUSIBLE_LAG_MS] (a skewed device clock, say) are treated as unknown
+     * @param plannedDurationMs how long the playlist says the break lasts ([AdBreakDetector.plannedDurationMs]), if it does
      */
-    fun onObservation(nowMs: Long, adAtEdge: Boolean, liveOffsetMs: Long?) {
+    fun onObservation(nowMs: Long, adAtEdge: Boolean, liveOffsetMs: Long?, plannedDurationMs: Long? = null) {
         lastObservationMs = nowMs
         val lag = liveOffsetMs?.takeIf { it in 0..MAX_PLAUSIBLE_LAG_MS }
         if (isLockedOut) {
@@ -234,6 +266,7 @@ class AdBreakPlanner(
             isLockedOut = false
         }
         if (adAtEdge) {
+            if (plannedDurationMs != null && plannedDurationMs > 0) plannedBreakMs = plannedDurationMs
             // The ad is (still) at the edge, so a pending exit was a flap between playlist refreshes.
             pendingExitAtMs = null
             firstCleanSeenMs = null
@@ -295,6 +328,7 @@ class AdBreakPlanner(
 
     private fun clear() {
         isActive = false
+        plannedBreakMs = null
         firstAdSeenMs = null
         firstCleanSeenMs = null
         pendingEnterAtMs = null
