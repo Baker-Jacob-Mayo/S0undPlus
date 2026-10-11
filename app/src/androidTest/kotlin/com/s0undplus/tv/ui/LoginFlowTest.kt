@@ -21,7 +21,7 @@ import org.junit.rules.ExternalResource
 import org.junit.runner.RunWith
 
 /** Twitch's device-code login as the fake plays it: a code to enter on a phone, then approval (or refusal). */
-private class FakeLogin : ExternalResource() {
+class FakeLogin : ExternalResource() {
     @Volatile var approved = false
     @Volatile var denied = false
 
