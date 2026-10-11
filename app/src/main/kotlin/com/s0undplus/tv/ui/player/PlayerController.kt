@@ -85,6 +85,12 @@ class PlayerController(
     )
     val displayName: StateFlow<String> = _displayName.asStateFlow()
 
+    private val _streamInfo = MutableStateFlow<Stream?>(null)
+
+    /** Viewer count, uptime, title and category of the live stream, refreshed on demand (see [refreshStreamInfo]). */
+    val streamInfo: StateFlow<Stream?> = _streamInfo.asStateFlow()
+    private var streamInfoAtMs = 0L
+
     /** The channel's profile, looked up once and only when the target did not already carry its user id. */
     private val userLookup: Deferred<User?> by lazy {
         scope.async {
@@ -219,6 +225,23 @@ class PlayerController(
         (source ?: tryingAlt)?.let { altCooldown.failed(it.key) }
     }
 
+    /** Fetches fresh stream details unless they are less than a minute old. Called while the controls are on screen. */
+    fun refreshStreamInfo() {
+        val live = target as? PlayTarget.Live ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (_streamInfo.value != null && now - streamInfoAtMs < STREAM_INFO_MIN_AGE_MS) return
+        streamInfoAtMs = now
+        scope.launch {
+            try {
+                c.helix.streamByLogin(live.login)?.let { _streamInfo.value = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // the overlay just keeps what it had
+            }
+        }
+    }
+
     /** Whether the live channel is still broadcasting per Helix; null if the check itself failed. */
     suspend fun isStillLive(): Boolean? {
         val live = target as? PlayTarget.Live ?: return null
@@ -265,6 +288,8 @@ class PlayerController(
     private companion object {
         /** One load works down the proxy list for at most this long before falling back to Twitch directly. */
         const val PROXY_BUDGET_MS = 20_000L
+
+        const val STREAM_INFO_MIN_AGE_MS = 55_000L
 
         /** A proxy that failed is left alone for this long, then tried again. */
         const val PROXY_COOLDOWN_MS = 5 * 60_000L

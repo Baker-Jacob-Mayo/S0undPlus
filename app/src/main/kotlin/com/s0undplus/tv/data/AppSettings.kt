@@ -97,6 +97,8 @@ data class AppSettings(
     val followRaids: Boolean = true,
     val pipOnHome: Boolean = true,
     val livePreviews: Boolean = false,
+    /** Fill the screen with the video (cropping the edges of a 4:3 or letterboxed stream) instead of fitting it. */
+    val zoomVideo: Boolean = false,
     // Background / system
     val goLiveNotifications: Boolean = false,
     val homeChannel: Boolean = false,
@@ -183,6 +185,7 @@ class SettingsRepository(private val context: Context) {
         val followRaids = booleanPreferencesKey("follow_raids")
         val pipOnHome = booleanPreferencesKey("pip_on_home")
         val livePreviews = booleanPreferencesKey("live_previews")
+        val zoomVideo = booleanPreferencesKey("zoom_video")
         val goLive = booleanPreferencesKey("go_live_notifications")
         val homeChannel = booleanPreferencesKey("home_channel")
         val autoUpdate = booleanPreferencesKey("auto_update_check")
@@ -314,6 +317,7 @@ class SettingsRepository(private val context: Context) {
             followRaids = this[Keys.followRaids] ?: d.followRaids,
             pipOnHome = this[Keys.pipOnHome] ?: d.pipOnHome,
             livePreviews = this[Keys.livePreviews] ?: d.livePreviews,
+            zoomVideo = this[Keys.zoomVideo] ?: d.zoomVideo,
             goLiveNotifications = this[Keys.goLive] ?: d.goLiveNotifications,
             homeChannel = this[Keys.homeChannel] ?: d.homeChannel,
             autoUpdateCheck = this[Keys.autoUpdate] ?: d.autoUpdateCheck,
@@ -357,6 +361,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.followRaids] = s.followRaids
         this[Keys.pipOnHome] = s.pipOnHome
         this[Keys.livePreviews] = s.livePreviews
+        this[Keys.zoomVideo] = s.zoomVideo
         this[Keys.goLive] = s.goLiveNotifications
         this[Keys.homeChannel] = s.homeChannel
         this[Keys.autoUpdate] = s.autoUpdateCheck

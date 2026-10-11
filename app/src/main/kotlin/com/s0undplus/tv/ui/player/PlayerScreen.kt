@@ -145,6 +145,7 @@ fun PlayerScreen(
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     val isLive = controller.isLive
     val channelName by controller.displayName.collectAsStateWithLifecycle()
+    val streamInfo by controller.streamInfo.collectAsStateWithLifecycle()
     val channelLogin = when (target) {
         is PlayTarget.Live -> target.login
         is PlayTarget.Vod -> target.channelLogin
@@ -186,6 +187,7 @@ fun PlayerScreen(
     var audioOnly by remember { mutableStateOf(false) }
     var qualityLabel by remember { mutableStateOf("Auto") }
     var buffering by remember { mutableStateOf(true) }
+    var latencyMs by remember { mutableStateOf<Long?>(null) }
     var playing by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var positionMs by remember { mutableLongStateOf(0L) }
@@ -439,10 +441,21 @@ fun PlayerScreen(
         playerError = null
     }
 
+    // Viewer count, uptime and title are fetched only while the controls are on screen, and at most once a minute.
+    LaunchedEffect(controlsVisible, isLive) {
+        if (controlsVisible && isLive) {
+            while (true) {
+                controller.refreshStreamInfo()
+                delay(60_000)
+            }
+        }
+    }
+
     LaunchedEffect(exo) {
         while (true) {
             positionMs = exo.currentPosition
             durationMs = exo.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+            latencyMs = if (isLive) exo.currentLiveOffset.takeIf { it != C.TIME_UNSET } else null
             delay(if (controlsVisible) 500 else 5_000)
         }
     }
@@ -638,14 +651,21 @@ fun PlayerScreen(
                             player = exo
                         }
                     },
-                    update = { it.keepScreenOn = settings.keepScreenOn },
+                    update = {
+                        it.keepScreenOn = settings.keepScreenOn
+                        it.resizeMode = if (settings.zoomVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
 
                 if (covered) {
                     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                         Text(
-                            if (adState == AdState.Hiding) "Ad break — hidden" else "Ad break — switching to an ad-free copy",
+                            if (adState == AdState.Hiding) {
+                                "Ad break — hidden" + (adBlocker.remainingSeconds?.let { " · ${Format.clock(it)} left" }.orEmpty())
+                            } else {
+                                "Ad break — switching to an ad-free copy"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             color = Palette.Muted,
                         )
@@ -731,6 +751,9 @@ fun PlayerScreen(
                         pipSupported = bridge.pipSupported,
                         isFavorite = isFavorite,
                         showClock = settings.showClock,
+                        info = streamInfo,
+                        latencyMs = latencyMs,
+                        zoom = settings.zoomVideo,
                         positionMs = positionMs,
                         durationMs = durationMs,
                         firstControl = firstControl,
@@ -754,6 +777,12 @@ fun PlayerScreen(
                         },
                         onChannel = { onOpenChannel(channelLogin) },
                         onChatOnPhone = { showChatQr = true },
+                        onZoom = { uiScope.launch { container.settings.update { it.copy(zoomVideo = !it.zoomVideo) } } },
+                        onJumpToLive = {
+                            exo.seekToDefaultPosition()
+                            exo.play()
+                            controlsVisible = false
+                        },
                     )
                 }
             }
@@ -860,6 +889,9 @@ private fun ControlsOverlay(
     pipSupported: Boolean,
     isFavorite: Boolean,
     showClock: Boolean,
+    info: Stream?,
+    latencyMs: Long?,
+    zoom: Boolean,
     positionMs: Long,
     durationMs: Long,
     firstControl: FocusRequester,
@@ -873,6 +905,8 @@ private fun ControlsOverlay(
     onFavorite: () -> Unit,
     onChannel: () -> Unit,
     onChatOnPhone: () -> Unit,
+    onZoom: () -> Unit,
+    onJumpToLive: () -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
         Row(
@@ -886,11 +920,22 @@ private fun ControlsOverlay(
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val subtitle = when (target) {
-                    is PlayTarget.Live -> listOfNotNull(target.title, target.game).joinToString(" · ")
+                    is PlayTarget.Live -> listOfNotNull(
+                        info?.title?.takeIf { it.isNotBlank() } ?: target.title,
+                        info?.gameName?.takeIf { it.isNotBlank() } ?: target.game,
+                    ).joinToString(" · ")
                     is PlayTarget.Vod -> target.channelName
                 }
                 if (subtitle.isNotBlank()) {
                     Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Palette.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (isLive && info != null) {
+                    val uptime = Format.uptime(info.startedAt)
+                    Text(
+                        "${Format.count(info.viewerCount)} viewers" + (uptime?.let { " · live for $it" }.orEmpty()),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Muted,
+                    )
                 }
             }
             if (showClock) ClockText()
@@ -914,12 +959,19 @@ private fun ControlsOverlay(
                 )
                 if (!isLive) PillButton("+30s", { onSeek(30_000) })
                 PillButton("Quality: $qualityLabel", onQuality)
+                PillButton(if (zoom) "Video: fill" else "Video: fit", onZoom)
                 PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
                 PillButton(if (audioOnly) "Audio only: On" else "Audio only", onAudioOnly, selected = audioOnly)
                 if (pipSupported) PillButton("Picture-in-picture", onPip)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (isLive) PillButton("Peek other streams", onPeek)
+                if (isLive) {
+                    PillButton(
+                        latencyMs?.let { "Jump to live (${"%.1f".format(java.util.Locale.US, it / 1000.0)} s behind)" } ?: "Jump to live",
+                        onJumpToLive,
+                    )
+                    PillButton("Peek other streams", onPeek)
+                }
                 PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
                 PillButton("Channel page", onChannel)
                 PillButton("Chat on phone", onChatOnPhone)

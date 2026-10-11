@@ -105,6 +105,10 @@ class AdBlocker(
     var alt by mutableStateOf<AltStream?>(null)
         private set
 
+    /** Seconds left in the break the viewer is in, when the playlist said how long it lasts; otherwise null. */
+    var remainingSeconds by mutableStateOf<Long?>(null)
+        private set
+
     private val planner = AdBreakPlanner()
     private var scope: CoroutineScope? = null
     private var swapEnabled = false
@@ -164,7 +168,8 @@ class AdBlocker(
         val now = SystemClock.elapsedRealtime()
         // Entering is dated from when the request went out (the playlist can only have been older than that), so a slow
         // answer doesn't delay the hide; leaving is dated from when the answer arrived, where being late is the safe side.
-        planner.onObservation(if (adAtEdge) requestedAt else now, adAtEdge, liveOffsetMs())
+        val planned = if (adAtEdge) AdBreakDetector.plannedDurationMs(view) else null
+        planner.onObservation(if (adAtEdge) requestedAt else now, adAtEdge, liveOffsetMs(), planned)
         // Resolve the ad-free copy as soon as the ad shows up at the live edge, so it is ready when it arrives.
         if (prefetch != null && !planner.isActive && now - prefetchedAtMs > PREFETCH_MAX_AGE_MS) dropPrefetch()
         if (adAtEdge && swapEnabled && prefetch == null && !planner.isActive && !planner.isLockedOut) {
@@ -184,11 +189,13 @@ class AdBlocker(
     private suspend fun tick() {
         try {
             while (currentCoroutineContext().isActive) {
-                when (planner.poll(SystemClock.elapsedRealtime())) {
+                val now = SystemClock.elapsedRealtime()
+                when (planner.poll(now)) {
                     AdBreakPlanner.Action.Enter -> scope?.enter()
                     AdBreakPlanner.Action.Exit -> exit()
                     AdBreakPlanner.Action.None -> Unit
                 }
+                remainingSeconds = planner.remainingMs(now)?.let { (it + 999) / 1000 }
                 delay(TICK_MS)
             }
         } finally {
@@ -253,6 +260,7 @@ class AdBlocker(
         swapAttempt?.cancel()
         swapAttempt = null
         alt = null
+        remainingSeconds = null
         state = AdState.Idle
     }
 
