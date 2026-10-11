@@ -29,13 +29,13 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | **Browse** | **Following** (favorites → live now → offline), **Live**, **Language** row, **Categories**, **History**, **Search**. Long-press any card to open the channel page. |
 | **Remembers your place** | Going back from a stream returns to the same tab, scroll position and focused card. |
 | **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
-| **Channel pages & VODs** | Profile, live status, past broadcasts with **resume where you left off**, plus a **History** tab of what you watched. |
+| **Channel pages & VODs** | Profile, live status, past broadcasts, highlights and uploads, with **resume where you left off**, plus a **History** tab of what you watched. |
 | **Player** | Media3 HLS, quality picker with a remembered preference, audio-only mode, live-edge recovery, VOD seeking, touch/swipe gestures (volume, chat, seek). |
 | **Auto-refresh** | If a stream ends or stalls, the app checks the streamer is still online, then re-requests a fresh playback token and reconnects (normal or aggressive mode, configurable retries and interval). |
 | **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). |
 | **Raid redirect** | When the channel you're watching raids another one, you're taken along after a 10 s countdown (Back to stay). Uses Twitch's official EventSub. |
 | **Picture-in-picture** | Press Home while watching and the stream shrinks into a PiP window (Android 8+, device permitting). |
-| **Chat** | Overlay or beside the video; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling. **VOD chat replay** in sync with the video. |
+| **Chat** | Overlay or beside the video; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling, highlighted `@you` mentions, cheer amounts and reply context. **VOD chat replay** in sync with the video. |
 | **Chat filters** | Hide known bots, `!commands`, blocked words and blocked users. |
 | **Chat on your phone** | QR code that opens the channel's chat on your phone, since TV chat is read-only. |
 | **Live previews** | Optional (off by default): a focused card plays a muted, lowest-quality preview using one shared player. |
@@ -234,7 +234,7 @@ are best-effort and optional.
 
 What has and hasn't been verified:
 
-- ✅ `twitch-core`: **146 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
+- ✅ `twitch-core`: **about 190 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
   refresh, device-code polling, playlist/IRC/emote parsing, a real WebSocket round-trip with reconnect, an EventSub
   WebSocket flow (welcome → subscribe → raid), VOD chat parsing and replay across seeks, auto-refresh rules, version
   comparison, favorites/history bounds, deep-link parsing, and the ad-handling logic described under [Ads](#ads).
