@@ -112,7 +112,7 @@ jobs:
       - name: App unit tests
         run: |
           set -o pipefail
-          ./gradlew :app:testReleaseUnitTest --console=plain 2>&1 | tee unit.log
+          ./gradlew :app:testDebugUnitTest --console=plain 2>&1 | tee unit.log
       - name: Summary (compact, for quick reading)
         if: always()
         run: |
