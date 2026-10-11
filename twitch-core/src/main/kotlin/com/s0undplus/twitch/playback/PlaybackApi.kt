@@ -32,6 +32,9 @@ data class PlaybackStream(val masterUrl: String, val variants: List<Variant>)
 /** The channel exists but is not broadcasting right now. */
 class ChannelOfflineException(val login: String) : IOException("$login is offline")
 
+/** Twitch refused to hand out this video's playlist (usually a subscribers-only VOD). */
+class VodRestrictedException(val videoId: String) : IOException("Video $videoId is restricted")
+
 /**
  * Turns a channel login / VOD id into HLS playlists.
  *
@@ -74,7 +77,12 @@ class PlaybackApi(
             http, isLive = false, login = "", vodId = videoId,
             playerType = PlayerTypes.SITE, platform = PlayerTypes.WEB,
         )
-        return load(http, vodMasterUrl(videoId, token), onNotFound = { IOException("VOD $videoId is not available") })
+        return load(
+            http,
+            vodMasterUrl(videoId, token),
+            onNotFound = { IOException("VOD $videoId is not available") },
+            onForbidden = { VodRestrictedException(videoId) },
+        )
     }
 
     internal fun liveMasterUrl(login: String, token: PlaybackToken, platform: String = PlayerTypes.WEB): HttpUrl =
@@ -120,12 +128,18 @@ class PlaybackApi(
         .addQueryParameter("supported_codecs", "h264")
         .addQueryParameter("p", random.nextInt(0, 9_999_999).toString())
 
-    private suspend fun load(client: OkHttpClient, url: HttpUrl, onNotFound: () -> IOException): PlaybackStream {
+    private suspend fun load(
+        client: OkHttpClient,
+        url: HttpUrl,
+        onNotFound: () -> IOException,
+        onForbidden: (() -> IOException)? = null,
+    ): PlaybackStream {
         val request = Request.Builder().url(url).build()
         client.newCall(request).await().use { response ->
             // A playlist is a few kilobytes; never buffer more than a megabyte of whatever a proxy sends back.
             val text = response.peekBody(MAX_PLAYLIST_BYTES).string()
             if (response.code == 404) throw onNotFound()
+            if (response.code == 403 && onForbidden != null) throw onForbidden()
             if (!response.isSuccessful) throw TwitchApiException(response.code, "Playlist request failed", text)
             // A rewriting proxy may hand back relative rung URLs; make them absolute, against the URL the playlist was
             // actually served from (after any redirect), so each rung plays on its own.

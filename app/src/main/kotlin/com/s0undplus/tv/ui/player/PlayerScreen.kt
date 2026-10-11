@@ -55,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -66,6 +68,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
@@ -113,6 +117,9 @@ private const val SEEK_LARGE_MS = 30_000L
 private const val CONTROLS_TIMEOUT_MS = 6_000L
 private const val RAID_COUNTDOWN_SECONDS = 10
 private const val RESUME_WAIT_MS = 12_000L
+
+/** The longest the picture stays covered while an ad-free copy loads, even if it never draws a frame. */
+private const val ALT_COVER_MAX_MS = 6_000L
 private const val GESTURE_THRESHOLD_PX = 140f
 private val CHAT_WIDTH = 380.dp
 
@@ -137,14 +144,18 @@ fun PlayerScreen(
     val raid by controller.raid.collectAsStateWithLifecycle()
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     val isLive = controller.isLive
+    val channelName by controller.displayName.collectAsStateWithLifecycle()
     val channelLogin = when (target) {
         is PlayTarget.Live -> target.login
         is PlayTarget.Vod -> target.channelLogin
     }
     val isFavorite = favorites.any { it.login.equals(channelLogin, ignoreCase = true) }
+    val headerTitle = if (isLive) channelName else titleOf(target)
 
     val exo = remember {
         ExoPlayer.Builder(context)
+            // The app's one OkHttp client (shared pool and timeouts) instead of Media3's separate default stack.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(container.http)))
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
                 /* handleAudioFocus = */ true,
@@ -163,6 +174,10 @@ fun PlayerScreen(
     }
     val adState = adBlocker.state
     val alt = adBlocker.alt
+    // The ad-free copy is only uncovered (and unmuted) once it has drawn a frame, so the frozen last frame of the ad
+    // never shows while it loads.
+    var altShowing by remember { mutableStateOf(false) }
+    val covered = adState == AdState.Hiding || (adState == AdState.Swapped && !altShowing)
 
     var controlsVisible by remember { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
@@ -331,6 +346,10 @@ fun PlayerScreen(
                 }
             }
 
+            override fun onRenderedFirstFrame() {
+                altShowing = true
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
                 if (isPlaying) stall.onProgress()
@@ -365,15 +384,32 @@ fun PlayerScreen(
 
     // Ad handling: watch the original stream's playlist for ad breaks, and mute/black out while one plays.
     val watchUrl = rememberUpdatedState(ready?.let { mediaPlaylistUrl(it, qualityChoice, audioOnly, settings.quality) })
-    LaunchedEffect(watchAds, swapAds, ready != null) {
-        if (watchAds) adBlocker.run({ watchUrl.value }, swapAds)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(watchAds, swapAds, ready != null, lifecycleOwner) {
+        // Only while the screen is on: no polling, token requests or proxy traffic while the app is in the background.
+        if (watchAds) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                adBlocker.run({ watchUrl.value }, swapAds)
+            }
+        }
     }
-    LaunchedEffect(adState) {
-        exo.volume = if (adState == AdState.Hiding) 0f else 1f
+    LaunchedEffect(alt) {
+        altShowing = false
+        if (alt != null) {
+            delay(ALT_COVER_MAX_MS) // never keep the cover up longer than this if no frame ever arrives
+            altShowing = true
+        }
+    }
+    LaunchedEffect(covered) {
+        exo.volume = if (covered) 0f else 1f
     }
 
+    // What the previous run of the effect below played, so that an ad swap can tell itself from a quality change.
+    val previousAlt = remember { arrayOfNulls<AltStream>(1) }
     LaunchedEffect(ready, qualityChoice, audioOnly, alt) {
         val original = ready ?: return@LaunchedEffect
+        val swapOnly = previousAlt[0] != alt
+        previousAlt[0] = alt
         val stream = alt?.stream ?: original // during an ad break the ad-free copy stands in for the original
         val (label, url) = resolve(stream, qualityChoice, audioOnly, container.settings.settings.first().quality)
         qualityLabel = label
@@ -384,14 +420,22 @@ fun PlayerScreen(
         }
         val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build()
         val proxiedMedia = alt?.source?.mediaClient(container.http)
-        if (proxiedMedia != null) {
+        when {
             // The HTTP proxy is meant to serve this stream's media playlists, so the player must fetch them through it.
-            exo.setMediaSource(HlsMediaSource.Factory(OkHttpDataSource.Factory(proxiedMedia)).createMediaSource(item), start)
-        } else {
-            exo.setMediaItem(item, start)
+            proxiedMedia != null ->
+                exo.setMediaSource(HlsMediaSource.Factory(OkHttpDataSource.Factory(proxiedMedia)).createMediaSource(item), start)
+            // A stream that came from a proxy fails over quickly: one retry, not Media3's default three.
+            readyVia != null && alt == null -> exo.setMediaSource(
+                HlsMediaSource.Factory(OkHttpDataSource.Factory(container.http))
+                    .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(1))
+                    .createMediaSource(item),
+                start,
+            )
+            else -> exo.setMediaItem(item, start)
         }
         exo.prepare()
-        exo.play()
+        // Switching to or from the ad-free copy keeps whatever the viewer had chosen (a pause stays a pause).
+        if (!swapOnly) exo.play()
         playerError = null
     }
 
@@ -598,16 +642,20 @@ fun PlayerScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
 
-                if (adState == AdState.Hiding) {
+                if (covered) {
                     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-                        Text("Ad break — hidden", style = MaterialTheme.typography.titleMedium, color = Palette.Muted)
+                        Text(
+                            if (adState == AdState.Hiding) "Ad break — hidden" else "Ad break — switching to an ad-free copy",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Palette.Muted,
+                        )
                     }
                 }
 
                 if (audioOnly && playerError == null) {
                     Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
                         Text("Audio only", style = MaterialTheme.typography.headlineMedium, color = Palette.BrandSoft)
-                        Text(titleOf(target), style = MaterialTheme.typography.titleMedium, color = Palette.Muted)
+                        Text(headerTitle, style = MaterialTheme.typography.titleMedium, color = Palette.Muted)
                     }
                 }
 
@@ -639,7 +687,7 @@ fun PlayerScreen(
                                     controller.load()
                                 },
                             )
-                        } else if (buffering && !bridge.inPip && adState != AdState.Hiding) {
+                        } else if (buffering && !bridge.inPip && !covered) {
                             CenteredSpinner()
                         }
                     }
@@ -655,8 +703,12 @@ fun PlayerScreen(
 
                 if (!bridge.inPip) {
                     recoveryMessage?.let { Banner(it, Modifier.align(Alignment.TopCenter)) }
-                    if (adState == AdState.Swapped) {
+                    if (adState == AdState.Swapped && !covered) {
                         Banner("Ad break — playing an ad-free copy", Modifier.align(Alignment.TopCenter))
+                    } else if (recoveryMessage == null && adState == AdState.Idle &&
+                        (phase as? PlayerController.Phase.Ready)?.fellBackFromProxies == true
+                    ) {
+                        Banner("No ad-free proxy is available right now — ads will be hidden instead", Modifier.align(Alignment.TopCenter))
                     }
                     raid?.let { r ->
                         Banner(
@@ -670,6 +722,7 @@ fun PlayerScreen(
                 if (controlsVisible && !bridge.inPip) {
                     ControlsOverlay(
                         target = target,
+                        title = headerTitle,
                         isLive = isLive,
                         playing = playing,
                         qualityLabel = qualityLabel,
@@ -713,7 +766,7 @@ fun PlayerScreen(
         if (menu == Menu.Quality && ready != null) {
             QualityMenu(
                 variants = ready.variants.filter { !it.isAudioOnly },
-                current = if (qualityChoice == null) qualityLabel else qualityChoice,
+                current = qualityLabel,
                 selectedItem = selectedQualityItem,
                 modifier = Modifier.align(Alignment.CenterEnd),
                 onPick = { variant ->
@@ -798,6 +851,7 @@ private fun Banner(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun ControlsOverlay(
     target: PlayTarget,
+    title: String,
     isLive: Boolean,
     playing: Boolean,
     qualityLabel: String,
@@ -830,7 +884,7 @@ private fun ControlsOverlay(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(titleOf(target), style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val subtitle = when (target) {
                     is PlayTarget.Live -> listOfNotNull(target.title, target.game).joinToString(" · ")
                     is PlayTarget.Vod -> target.channelName
@@ -899,6 +953,16 @@ private fun PeekPanel(
     onPick: (Stream) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The panel can open before the list has loaded; take focus as soon as there is a first card to take it.
+    LaunchedEffect(streams.isNotEmpty()) {
+        if (streams.isNotEmpty()) {
+            try {
+                firstItem.requestFocus()
+            } catch (_: IllegalStateException) {
+                // not attached this frame
+            }
+        }
+    }
     Column(
         modifier
             .fillMaxWidth()
@@ -961,7 +1025,9 @@ private fun QualityMenu(
         verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
     ) {
         Text("Quality", style = MaterialTheme.typography.titleLarge, color = Palette.OnBackground)
-        QualityRow("Auto", current == "Auto", { onPick(null) }, if (current == "Auto" || current == null) Modifier.focusRequester(selectedItem) else Modifier)
+        // Focus goes to the ticked row, or to Auto when nothing matches (audio-only, or a rung that is no longer offered).
+        val matched = variants.any { it.name == current }
+        QualityRow("Auto", current == "Auto", { onPick(null) }, if (!matched) Modifier.focusRequester(selectedItem) else Modifier)
         for (v in variants) {
             val selected = current == v.name
             QualityRow(v.name, selected, { onPick(v) }, if (selected) Modifier.focusRequester(selectedItem) else Modifier)

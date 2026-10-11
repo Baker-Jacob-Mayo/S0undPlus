@@ -315,4 +315,17 @@ class PlaybackApiTest {
         val stream = api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template)))
         assertEquals(server.url("/real/place/720p.m3u8").toString(), stream.variants.single().url)
     }
+
+    @Test
+    fun aForbiddenVodPlaylistIsReportedAsRestrictedAndALiveOneAsAnHttpError() = runTest {
+        server.enqueue(json("""{"data":{"videoPlaybackAccessToken":{"value":"v","signature":"s"}}}"""))
+        server.enqueue(text("""{"error":"Forbidden","error_code":"vod_manifest_restricted"}""", 403))
+        val e = assertFailsWith<VodRestrictedException> { api.vod("999") }
+        assertEquals("999", e.videoId)
+
+        server.enqueue(json(tokenResponse))
+        server.enqueue(text("""{"error":"Forbidden"}""", 403))
+        val live = assertFailsWith<com.s0undplus.twitch.TwitchApiException> { api.live("alice") }
+        assertEquals(403, live.status)
+    }
 }

@@ -10,14 +10,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.MaterialTheme
@@ -49,6 +55,7 @@ import com.s0undplus.twitch.playback.RefreshMode
 import com.s0undplus.twitch.playback.VideoSwapEntry
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -69,35 +76,40 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
     val s by container.settings.settings.collectAsStateWithLifecycle(loaded)
     val account by container.session.tokens.collectAsStateWithLifecycle()
     val updateState by updates.state.collectAsStateWithLifecycle()
-    // Text fields edit local state seeded once from storage, so the cursor never jumps while a save round-trips.
-    var blockedWords by remember { mutableStateOf(loaded.blockedWords) }
-    var blockedUsers by remember { mutableStateOf(loaded.blockedUsers) }
-    var httpHost by remember { mutableStateOf(loaded.adHttpHost) }
-    var httpPort by remember { mutableStateOf(loaded.adHttpPort.takeIf { it > 0 }?.toString().orEmpty()) }
-    var httpUser by remember { mutableStateOf(loaded.adHttpUser) }
-    var httpPassword by remember { mutableStateOf(loaded.adHttpPassword) }
+    // Text fields edit local state seeded from storage (see SavedTextField), so the cursor never jumps while a save
+    // round-trips. [seed] is what they are seeded from; "Reset" refreshes it and rebuilds the fields.
+    var seed by remember { mutableStateOf(loaded) }
+    var resetCount by remember { mutableIntStateOf(0) }
     var newProxy by remember { mutableStateOf("") }
     var proxyError by remember { mutableStateOf<String?>(null) }
     var proxyStatus by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var checkingProxies by remember { mutableStateOf(false) }
 
+    // On the app's scope, not the screen's: a save that is still pending when the screen closes must not be lost.
     fun update(transform: (AppSettings) -> AppSettings) {
-        scope.launch { container.settings.update(transform) }
+        container.appScope.launch { container.settings.update(transform) }
     }
 
     val proxies = s.proxyEntries
 
-    fun saveProxies(list: List<ProxyEntry>) = update { it.copy(adProxies = ProxyEntryCodec.encode(list)) }
+    // Edits are applied to the stored list inside the update, so two quick presses can't undo each other.
+    fun editProxies(change: (List<ProxyEntry>) -> List<ProxyEntry>) =
+        update { cur -> cur.copy(adProxies = ProxyEntryCodec.encode(change(ProxyEntryCodec.decode(cur.adProxies)))) }
+
+    fun editSwaps(change: (List<VideoSwapEntry>) -> List<VideoSwapEntry>) =
+        update { cur -> cur.copy(adSwap = ProxyEntryCodec.encodeSwap(change(ProxyEntryCodec.decodeSwap(cur.adSwap)))) }
 
     fun addProxy() {
-        val template = newProxy.trim()
-        if (!ProxyUrls.isUsable(template)) {
+        // Pasted text may hold several addresses; each usable one is added (and the unusable ones are reported).
+        val pasted = newProxy.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val usable = ProxyUrls.parseList(newProxy)
+        if (usable.isEmpty()) {
             proxyError = "That needs to be an https address with \$channel in it, e.g. proxy.example/live/\$channel"
             return
         }
-        saveProxies(listOf(ProxyEntry(template)) + proxies.filterNot { it.template == template })
+        editProxies { cur -> usable.map { ProxyEntry(it) } + cur.filterNot { it.template in usable } }
         newProxy = ""
-        proxyError = null
+        proxyError = if (pasted.size > usable.size) "Added ${usable.size}; skipped ${pasted.size - usable.size} that weren't usable." else null
     }
 
     fun checkProxies() {
@@ -152,11 +164,11 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
         item { ToggleRow("Hide !commands", s.hideCommands) { v -> update { it.copy(hideCommands = v) } } }
         item {
             Label("Blocked words (comma separated)")
-            TvTextField(blockedWords, { blockedWords = it; update { st -> st.copy(blockedWords = it) } }, "e.g. spoiler, giveaway")
+            SavedTextField(loaded.blockedWords, "e.g. spoiler, giveaway", onSave = { v -> update { it.copy(blockedWords = v) } })
         }
         item {
             Label("Blocked users (comma separated)")
-            TvTextField(blockedUsers, { blockedUsers = it; update { st -> st.copy(blockedUsers = it) } }, "e.g. someusername")
+            SavedTextField(loaded.blockedUsers, "e.g. someusername", onSave = { v -> update { it.copy(blockedUsers = v) } })
         }
 
         item { Header("Playback") }
@@ -206,10 +218,10 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                         Box(Modifier.weight(1f)) {
                             val status = proxyStatus[entry.template]?.let { if (it) " · online" else " · offline" }.orEmpty()
                             ValueRow(entry.template.substringAfter("://").substringBefore('/'), (if (entry.enabled) "On" else "Off") + status) {
-                                saveProxies(proxies.map { if (it.template == entry.template) it.copy(enabled = !it.enabled) else it })
+                                editProxies { cur -> cur.map { if (it.template == entry.template) it.copy(enabled = !it.enabled) else it } }
                             }
                         }
-                        PillButton("Remove", { saveProxies(proxies.filterNot { it.template == entry.template }) })
+                        PillButton("Remove", { editProxies { cur -> cur.filterNot { it.template == entry.template } } })
                     }
                 }
                 item {
@@ -223,34 +235,51 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         PillButton("Add", ::addProxy)
                         PillButton(if (checkingProxies) "Checking…" else "Check which are online", ::checkProxies)
-                        PillButton("Reset to Xtra's list", { saveProxies(ProxyDefaults.customProxies) })
+                        PillButton("Reset to Xtra's list", { editProxies { ProxyDefaults.customProxies } })
                     }
                 }
             }
             AdMode.HTTP_PROXY -> {
                 item {
                     Label("Proxy host")
-                    TvTextField(httpHost, { httpHost = it; update { st -> st.copy(adHttpHost = it.trim()) } }, "e.g. proxy.example.com")
+                    key(resetCount) {
+                        SavedTextField(seed.adHttpHost, "e.g. proxy.example.com", onSave = { v -> update { it.copy(adHttpHost = v.trim()) } })
+                    }
                 }
                 item {
-                    Label("Port")
-                    TvTextField(
-                        httpPort,
-                        { raw ->
-                            val digits = raw.filter(Char::isDigit).take(5)
-                            httpPort = digits
-                            update { st -> st.copy(adHttpPort = digits.toIntOrNull() ?: 0) }
-                        },
-                        "e.g. 8080",
-                    )
+                    Label("Port (1–65535)")
+                    key(resetCount) {
+                        SavedTextField(
+                            initial = seed.adHttpPort.takeIf { it > 0 }?.toString().orEmpty(),
+                            hint = "e.g. 8080",
+                            filter = { raw -> raw.filter(Char::isDigit).take(5) },
+                            onSave = { v ->
+                                // Out of range counts as "not set": the hint below says so instead of a clamped port being used.
+                                update { it.copy(adHttpPort = v.toIntOrNull()?.takeIf { port -> port in 1..65535 } ?: 0) }
+                            },
+                        )
+                    }
+                }
+                if (s.httpProxy == null) {
+                    item {
+                        Text(
+                            "Enter a host name or address without http:// or a path, and a port from 1 to 65535. Until then this mode only hides ads.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Palette.BrandSoft,
+                        )
+                    }
                 }
                 item {
                     Label("Username (optional)")
-                    TvTextField(httpUser, { httpUser = it; update { st -> st.copy(adHttpUser = it) } }, "leave empty if none")
+                    key(resetCount) {
+                        SavedTextField(seed.adHttpUser, "leave empty if none", onSave = { v -> update { it.copy(adHttpUser = v) } })
+                    }
                 }
                 item {
                     Label("Password (optional; stored on this device only)")
-                    TvTextField(httpPassword, { httpPassword = it; update { st -> st.copy(adHttpPassword = it) } }, "leave empty if none")
+                    key(resetCount) {
+                        SavedTextField(seed.adHttpPassword, "leave empty if none", onSave = { v -> update { it.copy(adHttpPassword = v) } })
+                    }
                 }
                 item { ToggleRow("Send playback-token requests through the proxy", s.adHttpToken) { v -> update { it.copy(adHttpToken = v) } } }
                 item { ToggleRow("Send the master-playlist request through the proxy", s.adHttpMultivariant) { v -> update { it.copy(adHttpMultivariant = v) } } }
@@ -258,15 +287,15 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                 item {
                     ValueRow("Reset to Xtra's default proxy", "${ProxyDefaults.httpProxy.host}:${ProxyDefaults.httpProxy.port}") {
                         val d = ProxyDefaults.httpProxy
-                        httpHost = d.host
-                        httpPort = d.port.toString()
-                        httpUser = ""
-                        httpPassword = ""
-                        update {
-                            it.copy(
-                                adHttpHost = d.host, adHttpPort = d.port, adHttpUser = "", adHttpPassword = "",
-                                adHttpToken = d.proxyToken, adHttpMultivariant = d.proxyMultivariant, adHttpMedia = d.proxyMedia,
-                            )
+                        container.appScope.launch {
+                            container.settings.update {
+                                it.copy(
+                                    adHttpHost = d.host, adHttpPort = d.port, adHttpUser = "", adHttpPassword = "",
+                                    adHttpToken = d.proxyToken, adHttpMultivariant = d.proxyMultivariant, adHttpMedia = d.proxyMedia,
+                                )
+                            }
+                            seed = container.settings.settings.first()
+                            resetCount++ // rebuild the fields from the stored values
                         }
                     }
                 }
@@ -275,13 +304,16 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                 val swaps = s.swapEntries
                 items(swaps, key = { "${it.platform}/${it.playerType}" }) { entry ->
                     ValueRow("${entry.platform} · ${entry.playerType}", if (entry.enabled) "On" else "Off") {
-                        val updated = swaps.map { if (it == entry) it.copy(enabled = !it.enabled) else it }
-                        update { it.copy(adSwap = ProxyEntryCodec.encodeSwap(updated)) }
+                        editSwaps { cur ->
+                            cur.map {
+                                if (it.platform == entry.platform && it.playerType == entry.playerType) it.copy(enabled = !it.enabled) else it
+                            }
+                        }
                     }
                 }
                 item {
                     ValueRow("Reset to Xtra's list", "") {
-                        update { it.copy(adSwap = ProxyEntryCodec.encodeSwap(ProxyDefaults.videoSwap)) }
+                        editSwaps { ProxyDefaults.videoSwap }
                     }
                 }
             }
@@ -382,6 +414,40 @@ private fun adBlurb(mode: AdMode): String = when (mode) {
             "serves ads to those identities changes over time, and it may go against Twitch's terms. Falls back to " +
             "hiding the ad."
 }
+
+/**
+ * A text field that edits local state and saves it half a second after typing stops, when it loses focus, or when
+ * the screen closes, instead of rewriting every setting to disk on each keystroke typed with a TV remote.
+ */
+@Composable
+private fun SavedTextField(
+    initial: String,
+    hint: String,
+    onSave: (String) -> Unit,
+    filter: (String) -> String = { it },
+) {
+    var text by remember { mutableStateOf(initial) }
+    var saved by remember { mutableStateOf(initial) }
+    val latestSave by rememberUpdatedState(onSave)
+
+    fun commit() {
+        if (text != saved) {
+            saved = text
+            latestSave(text)
+        }
+    }
+
+    LaunchedEffect(text) {
+        if (text != saved) {
+            delay(SAVE_DELAY_MS)
+            commit()
+        }
+    }
+    DisposableEffect(Unit) { onDispose { commit() } }
+    TvTextField(text, { text = filter(it) }, hint, Modifier.onFocusChanged { if (!it.hasFocus) commit() })
+}
+
+private const val SAVE_DELAY_MS = 500L
 
 @Composable
 private fun Header(text: String) {
