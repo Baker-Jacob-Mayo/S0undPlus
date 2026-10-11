@@ -103,7 +103,7 @@ fun PillButton(
             label,
             style = MaterialTheme.typography.titleSmall,
             color = Palette.OnBackground,
-            modifier = Modifier.padding(PaddingValues(horizontal = 24.dp, vertical = 10.dp)),
+            modifier = Modifier.padding(PaddingValues(horizontal = 18.dp, vertical = 10.dp)),
         )
     }
 }

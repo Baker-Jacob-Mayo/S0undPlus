@@ -232,13 +232,34 @@ Details worth knowing:
   device id per swap request as Xtra does. **Whether Twitch serves different ads for any of that is not something source
   code can show.**
 
-**Not verified:** the ad logic has been unit-tested (parsers, detector, break timing, routing, proxy auth, failover,
-timeouts), but the playlist fixtures are **synthetic, written from Xtra's rules**, not captured from a real ad break,
-and **nothing has been tried against real Twitch ads, a real proxy service, or on a TV.** CI proves it compiles.
+**What has and hasn't been checked:** the ad logic is unit-tested (parsers, detector, break timing, routing, proxy auth,
+failover, timeouts), and the real player is run through ad breaks on an Android TV emulator in CI — hiding the ad, and
+swapping to an ad-free copy — against a fake channel (see [Emulator tests](#emulator-tests)). But every playlist in those
+tests is **synthetic, written from Xtra's rules**, not captured from a real ad break, and **nothing has been tried
+against real Twitch ads, a real proxy service, or on real TV hardware.**
 
 Chat uses Twitch's documented anonymous IRC gateway. Chat history comes from the community-run
 [recent-messages](https://recent-messages.robotty.de) service; emotes from the public 7TV/BTTV/FFZ APIs. All three
 are best-effort and optional.
+
+## Emulator tests
+
+`app/src/androidTest` holds instrumented tests that run the real app on an **Android TV emulator**. The *Emulator tests*
+workflow boots one on a GitHub runner (hardware-accelerated KVM) on every push, runs them, and prints the results,
+failures, the app's own logs and **screenshots** into the job log (so you can read a run without downloading anything; the
+screenshots are base64 JPEGs between `SCREENSHOT-BEGIN` / `SCREENSHOT-END` markers).
+
+- **Nothing real is contacted.** A `MockWebServer` on the emulator's loopback plays every service (Helix, OAuth, GQL, usher,
+  the HLS playlists and segments); a test Application hands the app a container pointed at it, and any other host is
+  refused and fails the test. The video segments are tiny real MPEG-TS clips made with ffmpeg
+  (`app/src/androidTest/assets/hls`), so ExoPlayer genuinely decodes them.
+- **Run them yourself** with an emulator or TV connected: `./gradlew :app:connectedDebugAndroidTest -PtwitchClientId=test`
+  (the client ID can be any non-empty value; the tests never send it anywhere). Set `SUITE_REPEATS=3` for the CI script to
+  repeat the whole suite and tell a flaky test from a broken one.
+- **Debug builds only** allow cleartext traffic, and only to `localhost` / `127.0.0.1`, for the fake server; release builds
+  are unchanged.
+- **What they don't cover:** real Twitch, real ads, real proxy services, real TV decoders and GPUs (the emulator decodes in
+  software), the Google TV launcher, and anything needing hardware (HDMI-CEC, a real remote's quirks).
 
 ## Project status
 
@@ -251,16 +272,23 @@ What has and hasn't been verified:
 - ✅ The Android app **compiles and packages** on GitHub Actions (AGP 9.4, Gradle 9.6, Kotlin 2.4, `compileSdk` 37);
   Android lint reports **0 errors**; CI inspects the built APK with `aapt2` and `apksigner` (Leanback launcher, banner,
   permissions, `uses-feature`, signer).
-- ⚠️ **Never exercised on a real device or against live Twitch.** The environment this was built in could not reach
-  Twitch, 7TV/BTTV/FFZ or the Android SDK hosts. Twitch request/response shapes come from Twitch's docs and from reading
-  open-source clients (Streamlink, Xtra, chat-downloader). Expect first-contact fixes, most likely in `PlaybackApi`, the
-  VOD-chat response parser, the emote parsers, and EventSub (the exact welcome payload and auth requirements for
-  `channel.raid` were not confirmed against Twitch's own docs). D-pad focus behaviour, playback performance,
-  notifications, the TV home row, PiP and the installer flow on real TV hardware are untested.
-- ⚠️ **Ad handling has never met a real ad.** Its tests use synthetic playlists written from Xtra's rules; nothing has been
-  run against Twitch's actual ad breaks, a live proxy service or a TV, so whether the markers still look like that, and
-  whether any of the default proxies still work, is unknown. The player-side swap and hide logic (`AdBlocker`) is covered
-  by compilation and the core tests of the pieces it uses, not by an end-to-end test.
+- ✅ **20 instrumented tests run on an Android TV emulator** (API 34, x86, in GitHub Actions) against a fake Twitch served from
+  the emulator itself: signing in with the device code, the Home tabs and D-pad focus, Settings (saving, the language
+  dialog keeping the D-pad inside it, text fields), the on-screen keyboard, and the **real player (ExoPlayer, decoding
+  real video segments) through hide-the-ad and swap-to-an-ad-free-copy breaks**. They have already found and fixed three
+  real bugs that compilation and the unit tests could not: network reads on the main thread (Android refuses them, so
+  lists and playback would fail intermittently), a keyboard that popped up whenever the D-pad passed a text field, and
+  ad detection that threw on every poll because ExoPlayer was read from the wrong thread. See
+  [Emulator tests](#emulator-tests).
+- ⚠️ **Never exercised on real TV hardware or against live Twitch.** The environment this was built in could not reach
+  Twitch or 7TV/BTTV/FFZ, so the emulator tests talk to a fake. Twitch request/response shapes come from Twitch's docs and
+  from reading open-source clients (Streamlink, Xtra, chat-downloader). Expect first-contact fixes, most likely in
+  `PlaybackApi`, the VOD-chat response parser, the emote parsers, and EventSub (the exact welcome payload and auth
+  requirements for `channel.raid` were not confirmed against Twitch's own docs). Playback performance on a real TV's
+  decoders, notifications, the TV home row, PiP, the Google TV launcher, and the installer flow are untested.
+- ⚠️ **Ad handling has never met a real ad.** The emulator tests prove the app reacts correctly to the ad markers Xtra's
+  source describes, using synthetic playlists; whether Twitch's actual breaks still look like that, and whether any of
+  the default proxies still work, is unknown.
 - ⚠️ The **release workflow has never run** (it needs your signing secrets), and the **in-app updater has never installed
   anything**.
 - ⚠️ VOD chat replay and playback use **undocumented Twitch endpoints** that can change without notice; both degrade

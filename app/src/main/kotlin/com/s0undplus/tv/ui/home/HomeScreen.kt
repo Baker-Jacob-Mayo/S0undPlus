@@ -245,7 +245,7 @@ fun HomeScreen(
                     .focusProperties { enter = { tabRequesters.getValue(vm.tab) } }
                     .focusGroup()
                     .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 for (tab in HomeTab.entries) {
                     PillButton(

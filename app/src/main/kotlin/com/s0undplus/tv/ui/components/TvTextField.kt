@@ -154,7 +154,7 @@ private fun Editor(
                     .padding(horizontal = 20.dp, vertical = 14.dp),
             ) {
                 if (value.isEmpty()) {
-                    Text(hint, style = MaterialTheme.typography.titleMedium, color = Palette.Muted)
+                    Text(hint, style = MaterialTheme.typography.titleMedium.copy(fontSize = 22.sp), color = Palette.Muted)
                 }
                 inner()
             }
