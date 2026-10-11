@@ -57,7 +57,7 @@ print(f"--- {passed} passed, {failed} failed, {skipped} skipped ---")
 print("\n=== logcat: crashes, test diagnostics, the app's own messages ===")
 logcat = "emulator-results/logcat.txt"
 if os.path.exists(logcat):
-    interesting = re.compile(r"FATAL EXCEPTION|Process: com\.s0undplus|Screenshots|ANR in| TestLog")
+    interesting = re.compile(r"FATAL EXCEPTION|Process: com\.s0undplus|Screenshots|ANR in| TestLog| PagedLoader")
     lines = [l.rstrip() for l in open(logcat, errors="replace") if interesting.search(l)]
     for l in lines[-120:]:
         print(l[:300])

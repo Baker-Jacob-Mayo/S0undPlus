@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -69,6 +70,7 @@ class PagedLoader<T>(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                Log.w(TAG, "Loading the first page failed", e)
                 _state.value = _state.value.copy(loading = false, error = describe(e))
             }
         }
@@ -91,6 +93,7 @@ class PagedLoader<T>(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                Log.w(TAG, "Loading more failed", e)
                 _state.value = _state.value.copy(loading = false, error = describe(e))
             }
         }
@@ -108,8 +111,10 @@ fun describe(e: Throwable): String = when {
     e is TwitchApiException && e.status == 401 -> "Your Twitch session expired. Please sign in again."
     e is TwitchApiException -> "Twitch returned an error (${e.status})."
     e is IOException -> "Couldn't reach Twitch. Check your connection."
-    else -> e.message ?: "Something went wrong."
+    else -> e.message ?: "Something went wrong (${e.javaClass.simpleName})."
 }
+
+private const val TAG = "PagedLoader"
 
 /**
  * A responsive grid fed by a [PagedLoader]. Handles first-load spinner, empty and error states, infinite scroll and

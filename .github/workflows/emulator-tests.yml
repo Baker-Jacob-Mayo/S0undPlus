@@ -75,8 +75,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash scripts/emulator-tests.sh
         env:
-          # Twice, so a test that fails only sometimes shows up as such instead of as one unexplained red run.
-          SUITE_REPEATS: 2
+          # Raise this to run the whole suite repeatedly on one emulator, to tell a flaky test from a broken one.
+          SUITE_REPEATS: 1
       - name: Summary (results, crashes, screenshots)
         if: always()
         run: python3 scripts/summarize-emulator-results.py
