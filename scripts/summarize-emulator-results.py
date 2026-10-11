@@ -15,7 +15,7 @@ print("\n=== screenshots (JPEG, base64; decode to view) ===")
 shots = sorted(glob.glob("emulator-results/run-1/**/*.jpg", recursive=True)) or sorted(glob.glob("app/build/outputs/**/*.jpg", recursive=True))
 if not shots:
     print("(none)")
-for shot in shots[:12]:
+for shot in shots[:24]:
     data = base64.b64encode(open(shot, "rb").read()).decode()
     print(f"SCREENSHOT-BEGIN {os.path.basename(shot)}")
     print(data)
