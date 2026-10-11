@@ -111,6 +111,9 @@ data class ChatMessage(
     val bits: Int = 0,
     /** For VOD chat replay: when this message was sent, relative to the start of the video. Null for live chat. */
     val vodOffsetMs: Long? = null,
+    /** When this message is a reply: the display name of the message it answers, and (shortened by Twitch) its text. */
+    val replyToName: String? = null,
+    val replyToBody: String? = null,
 )
 
 sealed interface ChatEvent {
@@ -196,6 +199,8 @@ object ChatProtocol {
             timestampMillis = tags["tmi-sent-ts"]?.toLongOrNull() ?: 0L,
             isHighlighted = tags["msg-id"] == "highlighted-message",
             bits = tags["bits"]?.toIntOrNull() ?: 0,
+            replyToName = tags["reply-parent-display-name"]?.takeIf { it.isNotBlank() },
+            replyToBody = tags["reply-parent-msg-body"]?.takeIf { it.isNotBlank() },
         )
     }
 

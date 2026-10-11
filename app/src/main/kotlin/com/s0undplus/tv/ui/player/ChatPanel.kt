@@ -1,12 +1,15 @@
 package com.s0undplus.tv.ui.player
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -21,6 +24,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
@@ -31,11 +35,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.util.Format
 import com.s0undplus.twitch.chat.BadgeDirectory
 import com.s0undplus.twitch.chat.ChatFormatter
+import com.s0undplus.twitch.chat.ChatMentions
 import com.s0undplus.twitch.chat.ChatMessage
 import com.s0undplus.twitch.chat.ChatSegment
 import com.s0undplus.twitch.chat.EmoteDirectory
@@ -67,6 +73,7 @@ fun ChatPanel(controller: ChatController, settings: AppSettings, modifier: Modif
     val badges by controller.badges.collectAsStateWithLifecycle()
     val connected by controller.connected.collectAsStateWithLifecycle()
     val replayError by controller.replayError.collectAsStateWithLifecycle()
+    val selfLogin = LocalAppContainer.current.session.tokens.collectAsStateWithLifecycle().value?.login
     val fontSize = chatFontSize(settings.chatTextSize)
     val emoteLevel = settings.emoteSize
     val timestamps = settings.chatTimestamps
@@ -82,7 +89,7 @@ fun ChatPanel(controller: ChatController, settings: AppSettings, modifier: Modif
         ) {
             items(items.asReversed(), key = { it.key }) { item ->
                 if (item.message != null) {
-                    ChatLine(item.message, item.deleted, emotes, badges, fontSize, emoteLevel, timestamps)
+                    ChatLine(item.message, item.deleted, emotes, badges, fontSize, emoteLevel, timestamps, selfLogin)
                 } else {
                     Text(
                         item.notice.orEmpty(),
@@ -110,18 +117,36 @@ private fun ChatLine(
     fontSize: TextUnit,
     emoteLevel: Int,
     timestamps: Boolean,
+    selfLogin: String?,
 ) {
     val built = remember(message, deleted, emotes, badges, emoteLevel, timestamps) {
         buildLine(message, deleted, emotes, badges, emoteLevel, timestamps)
     }
-    Text(
-        text = built.text,
-        inlineContent = built.inline,
-        fontSize = fontSize,
-        lineHeight = fontSize * 1.45f,
-        color = Palette.OnBackground,
-        modifier = Modifier.padding(vertical = 3.dp),
-    )
+    val mentioned = !deleted && ChatMentions.mentions(message.text, selfLogin)
+    val frame = if (mentioned) {
+        Modifier.background(Palette.Brand.copy(alpha = 0.28f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp)
+    } else {
+        Modifier
+    }
+    Column(Modifier.padding(vertical = 3.dp).then(frame)) {
+        val replyTo = message.replyToName
+        if (replyTo != null && !deleted) {
+            Text(
+                "↪ $replyTo: ${message.replyToBody.orEmpty()}",
+                fontSize = fontSize * 0.8f,
+                color = Palette.Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = built.text,
+            inlineContent = built.inline,
+            fontSize = fontSize,
+            lineHeight = fontSize * 1.45f,
+            color = Palette.OnBackground,
+        )
+    }
 }
 
 private class BuiltLine(val text: AnnotatedString, val inline: Map<String, InlineTextContent>)
@@ -170,6 +195,9 @@ private fun buildLine(
         if (deleted) {
             withStyle(SpanStyle(color = Palette.Muted, fontStyle = FontStyle.Italic)) { append("<message deleted>") }
         } else {
+            if (message.bits > 0) {
+                withStyle(SpanStyle(color = Palette.BrandSoft, fontWeight = FontWeight.Bold)) { append("◆${message.bits} ") }
+            }
             val body = ChatFormatter.format(message, emotes)
             val textStyle = if (message.isAction) SpanStyle(color = nameColor, fontStyle = FontStyle.Italic) else SpanStyle()
             body.forEachIndexed { index, segment ->

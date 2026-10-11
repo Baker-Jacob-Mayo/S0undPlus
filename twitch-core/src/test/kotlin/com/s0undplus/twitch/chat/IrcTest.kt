@@ -30,6 +30,21 @@ class IrcTest {
     }
 
     @Test
+    fun readsBitsAndReplyContextFromTheTags() {
+        val line = "@bits=500;display-name=Fan;id=m1;reply-parent-display-name=Streamer\\sName;" +
+            "reply-parent-msg-body=what\\sgame\\s:)\\sis\\sthis;room-id=1;user-id=2 " +
+            ":fan!fan@fan.tmi.twitch.tv PRIVMSG #channel :@Streamer_Name this one cheer500"
+        val msg = assertNotNull(ChatProtocol.parseMessage(assertNotNull(IrcParser.parse(line))))
+        assertEquals(500, msg.bits)
+        assertEquals("Streamer Name", msg.replyToName)
+        assertEquals("what game :) is this", msg.replyToBody)
+        val plain = assertNotNull(ChatProtocol.parseMessage(assertNotNull(IrcParser.parse(privmsg))))
+        assertNull(plain.replyToName)
+        assertNull(plain.replyToBody)
+        assertEquals(0, plain.bits)
+    }
+
+    @Test
     fun parsesLinesWithoutTagsOrPrefix() {
         val irc = assertNotNull(IrcParser.parse("PING :tmi.twitch.tv\r\n"))
         assertEquals("PING", irc.command)
