@@ -108,6 +108,10 @@ private const val SEEK_SMALL_MS = 10_000L
 private const val SEEK_LARGE_MS = 30_000L
 private const val CONTROLS_TIMEOUT_MS = 8_000L
 private const val RAID_COUNTDOWN_SECONDS = 10
+
+/** How long a [Banner] note such as "No other followed channels are live" stays up. */
+private const val FLASH_MS = 3_000L
+
 private const val RESUME_WAIT_MS = 12_000L
 
 /** The longest the picture stays covered while an ad-free copy loads, even if it never draws a frame. */
@@ -189,11 +193,19 @@ fun PlayerScreen(
     var durationMs by remember { mutableLongStateOf(0L) }
     var resumeAfterStop by remember { mutableStateOf(false) }
     var recoveryMessage by remember { mutableStateOf<String?>(null) }
+    /** A short note shown for a few seconds, e.g. when Channel +/- has nowhere to go. */
+    var flashMessage by remember { mutableStateOf<String?>(null) }
     var endedNote by remember { mutableStateOf<String?>(null) }
     var showChatQr by remember { mutableStateOf(false) }
     var raidSeconds by remember { mutableIntStateOf(RAID_COUNTDOWN_SECONDS) }
 
     val recoveryJob = remember { arrayOfNulls<Job>(1) }
+    LaunchedEffect(flashMessage) {
+        if (flashMessage != null) {
+            delay(FLASH_MS)
+            flashMessage = null
+        }
+    }
     val stall = remember { StallDetector() }
 
 
@@ -272,9 +284,20 @@ fun PlayerScreen(
     fun surf(delta: Int) {
         uiScope.launch {
             controller.loadOthers()
-            val list = withTimeoutOrNull(4_000) { controller.others.first { it.isNotEmpty() } } ?: return@launch
+            // Wait for the load to end either way, so "nothing else is live" is told apart from "still loading".
+            val status = withTimeoutOrNull(8_000) {
+                controller.othersStatus.first { it == OthersStatus.Loaded || it == OthersStatus.Failed }
+            }
+            val list = controller.others.value
             val candidates = list.filterNot { it.userLogin.equals(channelLogin, ignoreCase = true) }
-            if (candidates.isEmpty()) return@launch
+            if (candidates.isEmpty()) {
+                flashMessage = when {
+                    status != OthersStatus.Loaded -> "Couldn't load channels to switch to"
+                    settings.otherChannels == OtherChannels.FOLLOWED -> "No other followed channels are live"
+                    else -> "No other channels to switch to"
+                }
+                return@launch
+            }
             val currentIndex = list.indexOfFirst { it.userLogin.equals(channelLogin, ignoreCase = true) }
             val next = if (currentIndex < 0) candidates.first() else list[Math.floorMod(currentIndex + delta, list.size)]
             if (!next.userLogin.equals(channelLogin, ignoreCase = true)) onSwitch(next.toPlayTarget())
@@ -745,6 +768,7 @@ fun PlayerScreen(
 
                 if (!bridge.inPip) {
                     recoveryMessage?.let { Banner(it, Modifier.align(Alignment.TopCenter)) }
+                    if (recoveryMessage == null) flashMessage?.let { Banner(it, Modifier.align(Alignment.TopCenter)) }
                     if (adState == AdState.Swapped && !covered) {
                         Banner("Ad break — playing an ad-free copy", Modifier.align(Alignment.TopCenter))
                     } else if (recoveryMessage == null && adState == AdState.Idle &&
