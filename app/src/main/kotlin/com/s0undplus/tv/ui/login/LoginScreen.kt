@@ -37,6 +37,7 @@ import com.s0undplus.tv.ui.components.PillButton
 import com.s0undplus.tv.ui.components.QrImage
 import com.s0undplus.tv.ui.components.Spinner
 import com.s0undplus.tv.ui.theme.Palette
+import com.s0undplus.twitch.TwitchApiException
 import com.s0undplus.twitch.TwitchScopes
 import com.s0undplus.twitch.auth.DeviceCode
 import com.s0undplus.twitch.auth.DeviceLoginException
@@ -71,6 +72,10 @@ fun LoginScreen() {
                 continue // the code timed out: quietly fetch a fresh one
             } catch (_: DeviceLoginException.Denied) {
                 state = LoginState.Failed("Sign-in was cancelled on Twitch.")
+                return@LaunchedEffect
+            } catch (e: TwitchApiException) {
+                // Twitch answered, so the network is fine: a 400 here usually means a wrong or disabled client ID.
+                state = LoginState.Failed("Twitch rejected the request (HTTP ${e.status}). Check the client ID this build was made with.")
                 return@LaunchedEffect
             } catch (_: IOException) {
                 state = LoginState.Failed("Couldn't reach Twitch. Check your connection and try again.")
