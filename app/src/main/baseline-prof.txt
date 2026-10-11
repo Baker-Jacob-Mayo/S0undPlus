@@ -1,0 +1,6 @@
+# Baseline profile for the app's own code (the libraries ship theirs). Code listed here is compiled ahead of time
+# instead of being interpreted on first use, which on a TV box is the difference between smooth and janky D-pad
+# navigation. Android only applies it after the system's background optimisation runs (often overnight) for a
+# sideloaded APK; `adb shell cmd package compile -m speed-profile -f com.s0undplus.tv` applies it immediately.
+HSPLcom/s0undplus/**;->**(**)**
+Lcom/s0undplus/**;

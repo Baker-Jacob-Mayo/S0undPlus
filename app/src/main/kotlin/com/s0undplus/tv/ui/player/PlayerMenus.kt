@@ -45,6 +45,7 @@ internal fun PeekPanel(
     firstItem: FocusRequester,
     onPick: (Stream) -> Unit,
     modifier: Modifier = Modifier,
+    failed: Boolean = false,
 ) {
     // The panel can open before the list has loaded; take focus as soon as there is a first card to take it.
     LaunchedEffect(streams.isNotEmpty()) {
@@ -65,7 +66,7 @@ internal fun PeekPanel(
     ) {
         Text("Peek — pick a channel to switch (Back to close)", style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
         if (streams.isEmpty()) {
-            Text("Loading channels…", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
+            Text(if (failed) "Couldn't load other channels." else "Loading channels…", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
         } else {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(streams, key = { it.userId }) { stream ->
@@ -113,7 +114,8 @@ internal fun QualityMenu(
         modifier
             .fillMaxHeight()
             .width(320.dp)
-            .background(Palette.Scrim)
+            // Opaque: it opens over the chat, and chat text showing through made the options hard to read.
+            .background(Palette.Background)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
     ) {

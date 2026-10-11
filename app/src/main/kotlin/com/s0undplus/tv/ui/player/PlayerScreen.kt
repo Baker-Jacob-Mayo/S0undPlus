@@ -104,7 +104,7 @@ private enum class Menu { None, Quality, Peek }
 
 private const val SEEK_SMALL_MS = 10_000L
 private const val SEEK_LARGE_MS = 30_000L
-private const val CONTROLS_TIMEOUT_MS = 6_000L
+private const val CONTROLS_TIMEOUT_MS = 8_000L
 private const val RAID_COUNTDOWN_SECONDS = 10
 private const val RESUME_WAIT_MS = 12_000L
 
@@ -131,6 +131,7 @@ fun PlayerScreen(
     val settings by controller.settings.collectAsStateWithLifecycle()
     val phase by controller.phase.collectAsStateWithLifecycle()
     val others by controller.others.collectAsStateWithLifecycle()
+    val othersFailed by controller.othersFailed.collectAsStateWithLifecycle()
     val raid by controller.raid.collectAsStateWithLifecycle()
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     val isLive = controller.isLive
@@ -417,21 +418,18 @@ fun PlayerScreen(
                 exo.mediaItemCount > 0 -> exo.currentPosition // changing quality mid-VOD keeps your place
                 else -> (target as? PlayTarget.Vod)?.let { container.settings.vodPosition(it.id) } ?: C.TIME_UNSET
             }
-            val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build()
-            val proxiedMedia = alt?.source?.mediaClient(container.http)
-            when {
-                // The HTTP proxy is meant to serve this stream's media playlists, so the player must fetch them through it.
-                proxiedMedia != null ->
-                    exo.setMediaSource(HlsMediaSource.Factory(OkHttpDataSource.Factory(proxiedMedia)).createMediaSource(item), start)
+            val item = MediaItem.Builder()
+                .setUri(url)
+                .setMimeType(MimeTypes.APPLICATION_M3U8)
+                .apply { if (isLive) setLiveConfiguration(liveConfiguration()) }
+                .build()
+            // The HTTP proxy is meant to serve this stream's media playlists, so the player must fetch them through it.
+            val client = alt?.source?.mediaClient(container.http) ?: container.http
+            val factory = HlsMediaSource.Factory(OkHttpDataSource.Factory(client))
+                .setPlaylistParserFactory(LiveEdgePlaylistParserFactory())
                 // A stream that came from a proxy fails over quickly: one retry, not Media3's default three.
-                readyVia != null && alt == null -> exo.setMediaSource(
-                    HlsMediaSource.Factory(OkHttpDataSource.Factory(container.http))
-                        .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(1))
-                        .createMediaSource(item),
-                    start,
-                )
-                else -> exo.setMediaItem(item, start)
-            }
+                .apply { if (readyVia != null && alt == null) setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(1)) }
+            exo.setMediaSource(factory.createMediaSource(item), start)
             exo.prepare()
             // Switching to or from the ad-free copy keeps whatever the viewer had chosen (a pause stays a pause).
             if (!swapOnly) exo.play()
@@ -787,6 +785,7 @@ fun PlayerScreen(
                             exo.play()
                             controlsVisible = false
                         },
+                        headerEndInset = if (chatShown && !side) CHAT_WIDTH else 0.dp,
                     )
                 }
             }
@@ -821,6 +820,7 @@ fun PlayerScreen(
                 streams = others.filterNot { it.userLogin.equals(channelLogin, ignoreCase = true) },
                 firstItem = firstPeekItem,
                 modifier = Modifier.align(Alignment.BottomCenter),
+                failed = othersFailed,
                 onPick = { stream ->
                     menu = Menu.None
                     onSwitch(stream.toPlayTarget())

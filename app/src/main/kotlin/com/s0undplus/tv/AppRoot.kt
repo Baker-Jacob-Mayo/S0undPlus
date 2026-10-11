@@ -94,7 +94,6 @@ private fun SignedInHost(userId: String, login: String) {
         Route.Home -> HomeScreen(
             vm = home,
             updates = updates,
-            userLogin = login,
             onOpenStream = { nav.push(Route.Play(it.toPlayTarget())) },
             onOpenCategory = { nav.push(Route.Category(it.id, it.name)) },
             onOpenChannel = { nav.push(Route.Channel(it)) },

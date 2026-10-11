@@ -17,6 +17,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -26,6 +27,9 @@ import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.util.Format
 import com.s0undplus.twitch.Stream
+
+/** Behind live by more than this (twice the normal target), the controls offer a way back to live. */
+private const val JUMP_TO_LIVE_AFTER_MS = 12_000L
 
 @Composable
 internal fun ControlsOverlay(
@@ -57,14 +61,29 @@ internal fun ControlsOverlay(
     onChatOnPhone: () -> Unit,
     onZoom: () -> Unit,
     onJumpToLive: () -> Unit,
+    /** Room to leave on the right for chat drawn over the video, so the title doesn't run underneath it. */
+    headerEndInset: Dp = 0.dp,
 ) {
-    Box(Modifier.fillMaxSize()) {
+    // One backdrop over the whole screen, chat included: dark at the top and bottom where the text and buttons are, clear
+    // in the middle. On a busy stream the buttons were unreadable over the picture and the chat.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color(0xC0000000),
+                    0.28f to Color(0x40000000),
+                    0.5f to Color(0x30000000),
+                    0.68f to Color(0x80000000),
+                    1f to Color(0xF0000000),
+                ),
+            ),
+    ) {
         Row(
             Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent)))
-                .padding(horizontal = 48.dp, vertical = 28.dp),
+                .padding(start = 48.dp, end = 48.dp + headerEndInset, top = 28.dp, bottom = 28.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(Modifier.weight(1f)) {
@@ -95,11 +114,11 @@ internal fun ControlsOverlay(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xDD000000))))
                 .padding(horizontal = 48.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (!isLive) SeekBar(positionMs, durationMs)
+            // What you reach for while watching, on the row the remote lands on.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (!isLive) PillButton("−30s", { onSeek(-30_000) }, Modifier.focusRequester(firstControl))
                 PillButton(
@@ -108,22 +127,22 @@ internal fun ControlsOverlay(
                     if (isLive) Modifier.focusRequester(firstControl) else Modifier,
                 )
                 if (!isLive) PillButton("+30s", { onSeek(30_000) })
-                PillButton("Quality: $qualityLabel", onQuality)
-                PillButton(if (zoom) "Video: fill" else "Video: fit", onZoom)
-                PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
-                PillButton(if (audioOnly) "Audio only: On" else "Audio only", onAudioOnly, selected = audioOnly)
-                if (pipSupported) PillButton("Picture-in-picture", onPip)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (isLive) {
-                    PillButton(
-                        latencyMs?.let { "Jump to live (${"%.1f".format(java.util.Locale.US, it / 1000.0)} s behind)" } ?: "Jump to live",
-                        onJumpToLive,
-                    )
-                    PillButton("Peek other streams", onPeek)
+                    // Only worth offering when the viewer has fallen noticeably behind (after a pause, say).
+                    val behind = latencyMs?.takeIf { it > JUMP_TO_LIVE_AFTER_MS }
+                    if (behind != null) PillButton("Go live (${behind / 1000} s behind)", onJumpToLive)
                 }
+                PillButton("Quality: $qualityLabel", onQuality)
+                PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
+                if (isLive) PillButton("Other channels", onPeek)
+            }
+            // Everything else, one row down.
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
                 PillButton("Channel page", onChannel)
+                PillButton(if (audioOnly) "Audio only: On" else "Audio only", onAudioOnly, selected = audioOnly)
+                PillButton(if (zoom) "Video: fill" else "Video: fit", onZoom)
+                if (pipSupported) PillButton("Picture-in-picture", onPip)
                 PillButton("Chat on phone", onChatOnPhone)
             }
         }

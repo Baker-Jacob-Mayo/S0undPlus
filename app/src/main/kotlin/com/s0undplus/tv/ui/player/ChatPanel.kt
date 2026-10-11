@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -78,6 +79,13 @@ fun ChatPanel(controller: ChatController, settings: AppSettings, modifier: Modif
     val emoteLevel = settings.emoteSize
     val timestamps = settings.chatTimestamps
     val listState = rememberLazyListState()
+    // A keyed lazy list keeps the item it was showing anchored when new ones are added before it, so on its own the
+    // newest message (index 0, reversed) would land half below the bottom edge. Chat can't be scrolled by hand on a
+    // TV, so always follow the newest one.
+    val newestKey = items.lastOrNull()?.key
+    LaunchedEffect(newestKey) {
+        if (newestKey != null) listState.requestScrollToItem(0)
+    }
 
     Box(modifier) {
         // reverseLayout pins the newest message to the bottom without any manual scrolling logic.

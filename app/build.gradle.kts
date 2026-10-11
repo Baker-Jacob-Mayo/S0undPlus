@@ -72,7 +72,10 @@ android {
             // Without one it falls back to the debug key, which is different on every CI run: such APKs can be
             // installed, but not over each other (uninstall first). See README "Signing".
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
-            isMinifyEnabled = false
+            // R8: measured on a Google TV box, Compose without it spends most of each D-pad move on the UI thread.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 

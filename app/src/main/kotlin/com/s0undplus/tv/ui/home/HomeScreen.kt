@@ -1,5 +1,6 @@
 package com.s0undplus.tv.ui.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -132,6 +135,28 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     /** Favorites that are live right now, by lowercase login. */
     val favoriteStreams: StateFlow<Map<String, Stream>> = _favoriteStreams.asStateFlow()
 
+    private val _avatars = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val avatarsRequested = HashSet<String>()
+
+    /** Profile pictures by user id, for channel cards (the followed-channels list itself has none). */
+    val avatars: StateFlow<Map<String, String>> = _avatars.asStateFlow()
+
+    /** Looks up the profile pictures of [ids] not asked for yet, 100 per request, once each. */
+    fun loadAvatars(ids: List<String>) {
+        val missing = ids.filter { it.isNotEmpty() && avatarsRequested.add(it) }
+        if (missing.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val found = c.helix.usersById(missing).associate { it.id to it.profileImageUrl }
+                _avatars.value = _avatars.value + found.filterValues { it.isNotEmpty() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                avatarsRequested.removeAll(missing.toSet()) // try again next time the list shows
+            }
+        }
+    }
+
     var query by mutableStateOf("")
         private set
     private val _search = MutableStateFlow<SearchState>(SearchState.Idle)
@@ -207,7 +232,6 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 fun HomeScreen(
     vm: HomeViewModel,
     updates: UpdateViewModel,
-    userLogin: String,
     onOpenStream: (Stream) -> Unit,
     onOpenCategory: (Category) -> Unit,
     onOpenChannel: (String) -> Unit,
@@ -228,23 +252,39 @@ fun HomeScreen(
         }
     }
 
+    // Back from anywhere in the content goes up to the tabs first; only Back on the tabs leaves the app, so a stray
+    // press while browsing a long list doesn't close it.
+    var tabsFocused by remember { mutableStateOf(false) }
+    val backScope = rememberCoroutineScope()
+    BackHandler(enabled = !tabsFocused) {
+        backScope.launch { vm.gridStates.getValue(vm.tab).scrollToItem(0) }
+        try {
+            tabRequesters.getValue(vm.tab).requestFocus()
+        } catch (_: IllegalStateException) {
+            // tab row not attached; nothing to move to
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         UpdateBanner(updates)
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 20.dp),
+            Modifier.fillMaxWidth().padding(start = 48.dp, end = 40.dp, top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("S0und+", style = MaterialTheme.typography.headlineSmall, color = Palette.Brand, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(4.dp))
             Row(
                 Modifier
                     .weight(1f)
+                    .onFocusChanged { tabsFocused = it.hasFocus }
                     // Tabs select on focus, so pressing Up from a card must land on the *active* tab. Without this,
                     // focus goes to whichever pill is geometrically above that card and silently swaps the content.
                     .focusProperties { enter = { tabRequesters.getValue(vm.tab) } }
                     .focusGroup()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScroll(rememberScrollState())
+                    // Inside the scrolling area, so a focused pill's ring and enlargement aren't clipped at the edges.
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 for (tab in HomeTab.entries) {
@@ -257,8 +297,8 @@ fun HomeScreen(
                     )
                 }
             }
+            // The account name lives in Settings → Account; up here it only pushed the last tab off the screen.
             if (settings.showClock) ClockText()
-            Text(userLogin, style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
         }
 
         when (vm.tab) {
@@ -354,6 +394,10 @@ private fun FollowingContent(
 
     val liveLogins = live.items.map { it.userLogin.lowercase() }.toSet() + favoriteLive.keys
     val offlineItems = offline.items.filter { it.login.lowercase() !in liveLogins }
+    val avatars by vm.avatars.collectAsStateWithLifecycle()
+    LaunchedEffect(offlineItems.size, favorites) {
+        vm.loadAvatars(offlineItems.map { it.id } + favorites.mapNotNull { it.userId })
+    }
 
     if (live.items.isEmpty() && favorites.isEmpty() && offlineItems.isEmpty()) {
         when {
@@ -385,7 +429,7 @@ private fun FollowingContent(
                     StreamCard(stream, { onOpenStream(stream) }, itemModifier, preview, isFavorite = true, onLongClick = { onOpenChannel(fav.login) })
                 } else {
                     ChannelCard(
-                        ChannelResult(id = fav.userId.orEmpty(), login = fav.login, displayName = fav.displayName),
+                        ChannelResult(id = fav.userId.orEmpty(), login = fav.login, displayName = fav.displayName, thumbnailUrl = avatars[fav.userId].orEmpty()),
                         onClick = { onOpenChannel(fav.login) },
                         modifier = itemModifier,
                     )
@@ -427,7 +471,7 @@ private fun FollowingContent(
             items(offlineItems, key = { "off:${it.login}" }) { channel ->
                 val itemKey = "off:${channel.login}"
                 ChannelCard(
-                    ChannelResult(id = channel.id, login = channel.login, displayName = channel.displayName),
+                    ChannelResult(id = channel.id, login = channel.login, displayName = channel.displayName, thumbnailUrl = avatars[channel.id].orEmpty()),
                     onClick = { onOpenChannel(channel.login) },
                     modifier = Modifier
                         .fillMaxWidth()

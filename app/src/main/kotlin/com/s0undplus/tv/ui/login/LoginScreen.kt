@@ -126,9 +126,12 @@ private fun CodePanel(code: DeviceCode) {
     QrImage(code.verificationUri)
     Text(
         code.userCode,
-        fontSize = 56.sp,
+        // Sized so the widest 8-letter code (WMWMWMWM) still fits on one line in its half of a 1080p screen.
+        fontSize = 44.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = 8.sp,
+        letterSpacing = 4.sp,
+        maxLines = 1,
+        softWrap = false,
         color = Palette.OnBackground,
         textAlign = TextAlign.Center,
     )

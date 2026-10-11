@@ -130,6 +130,14 @@ adb connect <tv-ip>:5555
 adb install -r S0undPlus-release.apk
 ```
 
+Then, once, after installing or updating (it makes the app noticeably smoother straight away):
+
+```bash
+adb shell cmd package compile -m speed-profile -f com.s0undplus.tv
+```
+
+The APK carries a baseline profile, but for a sideloaded app Android only compiles it during its background optimisation, which on a TV box can be overnight; until then the app runs partly interpreted. Measured on an onn 4K Pro (Google TV), D-pad navigation on Home went from 40% janky frames to about 6% with this step.
+
 …or put the APK somewhere your TV can fetch it and install it with the *Downloader* app.
 
 ## Architecture

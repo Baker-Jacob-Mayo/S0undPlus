@@ -131,7 +131,7 @@ fun ChannelCard(channel: ChannelResult, onClick: () -> Unit, modifier: Modifier 
                 model = channel.thumbnailUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(56.dp).clip(CircleShape).background(Palette.SurfaceFocused),
+                modifier = Modifier.size(56.dp).clip(CircleShape).background(Palette.Background), // stays visible on a focused card
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(

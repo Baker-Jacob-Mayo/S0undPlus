@@ -73,8 +73,13 @@ class PlayerController(
 
     private val _others = MutableStateFlow<List<Stream>>(emptyList())
 
-    /** Live followed channels (falling back to top streams) for peek view and channel up/down. */
+    /** Other live channels for peek view and channel up/down: the viewer's follows first, then popular streams. */
     val others: StateFlow<List<Stream>> = _others.asStateFlow()
+
+    private val _othersFailed = MutableStateFlow(false)
+
+    /** True when [others] could not be loaded, so the peek view can say so instead of loading for ever. */
+    val othersFailed: StateFlow<Boolean> = _othersFailed.asStateFlow()
 
     /** The name to show for the channel: the target's own, upgraded to Twitch's capitalised one for deep links. */
     private val _displayName = MutableStateFlow(
@@ -257,15 +262,30 @@ class PlayerController(
     /** Loads [others] once (cheap if already loaded). */
     fun loadOthers() {
         if (_others.value.isNotEmpty()) return
+        _othersFailed.value = false
+        val current = when (target) {
+            is PlayTarget.Live -> target.login
+            is PlayTarget.Vod -> target.channelLogin
+        }
         scope.launch {
             try {
+                // The channel being watched is never offered. Popular streams fill the list so it is never empty when
+                // the only followed channel that is live is the one on screen.
                 val followed = c.helix.followedStreams(first = 40).items
-                val list = followed.ifEmpty { c.helix.streams(first = 20).items }
+                    .filterNot { it.userLogin.equals(current, ignoreCase = true) }
+                val list = if (followed.size >= MIN_OTHERS) {
+                    followed
+                } else {
+                    (followed + c.helix.streams(first = 20).items)
+                        .filterNot { it.userLogin.equals(current, ignoreCase = true) }
+                        .distinctBy { it.userId }
+                }
                 _others.value = list
+                if (list.isEmpty()) _othersFailed.value = true
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // peek view just stays empty
+                _othersFailed.value = true
             }
         }
     }
@@ -288,6 +308,9 @@ class PlayerController(
     private companion object {
         /** One load works down the proxy list for at most this long before falling back to Twitch directly. */
         const val PROXY_BUDGET_MS = 20_000L
+
+        /** Fewer other followed channels live than this, and popular streams are added to the peek list. */
+        const val MIN_OTHERS = 4
 
         const val STREAM_INFO_MIN_AGE_MS = 55_000L
 
