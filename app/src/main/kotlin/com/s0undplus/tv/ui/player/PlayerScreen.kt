@@ -16,18 +16,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -48,9 +44,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -74,16 +68,11 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import coil3.compose.AsyncImage
 import com.s0undplus.tv.LocalActivityBridge
 import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.data.AdMode
-import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.data.ChatLayout
-import com.s0undplus.tv.ui.components.ClockText
-import com.s0undplus.tv.ui.components.FocusSurface
 import com.s0undplus.tv.ui.components.MessageState
-import com.s0undplus.tv.ui.components.PillButton
 import com.s0undplus.tv.ui.components.QrDialog
 import com.s0undplus.tv.ui.components.Spinner
 import com.s0undplus.tv.ui.nav.PlayTarget
@@ -91,7 +80,6 @@ import com.s0undplus.tv.ui.nav.toPlayTarget
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.util.Format
 import com.s0undplus.tv.ui.util.rememberScreenScope
-import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.eventsub.RaidEvent
 import com.s0undplus.twitch.library.FavoriteChannel
 import com.s0undplus.twitch.library.HistoryEntry
@@ -101,7 +89,6 @@ import com.s0undplus.twitch.playback.QualityPreference
 import com.s0undplus.twitch.playback.RefreshMode
 import com.s0undplus.twitch.playback.RefreshStep
 import com.s0undplus.twitch.playback.StallDetector
-import com.s0undplus.twitch.playback.Variant
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -875,224 +862,4 @@ private fun Banner(text: String, modifier: Modifier = Modifier) {
             .background(Palette.Brand.copy(alpha = 0.92f))
             .padding(horizontal = 24.dp, vertical = 10.dp),
     )
-}
-
-@Composable
-private fun ControlsOverlay(
-    target: PlayTarget,
-    title: String,
-    isLive: Boolean,
-    playing: Boolean,
-    qualityLabel: String,
-    chatOn: Boolean,
-    audioOnly: Boolean,
-    pipSupported: Boolean,
-    isFavorite: Boolean,
-    showClock: Boolean,
-    info: Stream?,
-    latencyMs: Long?,
-    zoom: Boolean,
-    positionMs: Long,
-    durationMs: Long,
-    firstControl: FocusRequester,
-    onPlayPause: () -> Unit,
-    onSeek: (Long) -> Unit,
-    onQuality: () -> Unit,
-    onChat: () -> Unit,
-    onAudioOnly: () -> Unit,
-    onPip: () -> Unit,
-    onPeek: () -> Unit,
-    onFavorite: () -> Unit,
-    onChannel: () -> Unit,
-    onChatOnPhone: () -> Unit,
-    onZoom: () -> Unit,
-    onJumpToLive: () -> Unit,
-) {
-    Box(Modifier.fillMaxSize()) {
-        Row(
-            Modifier
-                .align(Alignment.TopStart)
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent)))
-                .padding(horizontal = 48.dp, vertical = 28.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val subtitle = when (target) {
-                    is PlayTarget.Live -> listOfNotNull(
-                        info?.title?.takeIf { it.isNotBlank() } ?: target.title,
-                        info?.gameName?.takeIf { it.isNotBlank() } ?: target.game,
-                    ).joinToString(" · ")
-                    is PlayTarget.Vod -> target.channelName
-                }
-                if (subtitle.isNotBlank()) {
-                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Palette.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (isLive && info != null) {
-                    val uptime = Format.uptime(info.startedAt)
-                    Text(
-                        "${Format.count(info.viewerCount)} viewers" + (uptime?.let { " · live for $it" }.orEmpty()),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Palette.Muted,
-                    )
-                }
-            }
-            if (showClock) ClockText()
-        }
-
-        Column(
-            Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xDD000000))))
-                .padding(horizontal = 48.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            if (!isLive) SeekBar(positionMs, durationMs)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!isLive) PillButton("−30s", { onSeek(-30_000) }, Modifier.focusRequester(firstControl))
-                PillButton(
-                    if (playing) "Pause" else "Play",
-                    onPlayPause,
-                    if (isLive) Modifier.focusRequester(firstControl) else Modifier,
-                )
-                if (!isLive) PillButton("+30s", { onSeek(30_000) })
-                PillButton("Quality: $qualityLabel", onQuality)
-                PillButton(if (zoom) "Video: fill" else "Video: fit", onZoom)
-                PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
-                PillButton(if (audioOnly) "Audio only: On" else "Audio only", onAudioOnly, selected = audioOnly)
-                if (pipSupported) PillButton("Picture-in-picture", onPip)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (isLive) {
-                    PillButton(
-                        latencyMs?.let { "Jump to live (${"%.1f".format(java.util.Locale.US, it / 1000.0)} s behind)" } ?: "Jump to live",
-                        onJumpToLive,
-                    )
-                    PillButton("Peek other streams", onPeek)
-                }
-                PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
-                PillButton("Channel page", onChannel)
-                PillButton("Chat on phone", onChatOnPhone)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SeekBar(positionMs: Long, durationMs: Long) {
-    val fraction = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.fillMaxWidth().height(6.dp).background(Color(0x55FFFFFF))) {
-            Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(Palette.Brand))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(Format.clock(positionMs / 1000), style = MaterialTheme.typography.labelMedium, color = Color.White)
-            Text(Format.clock(durationMs / 1000), style = MaterialTheme.typography.labelMedium, color = Palette.Muted)
-        }
-    }
-}
-
-/**
- * Peek view: browse other live channels without leaving the stream. Uses thumbnails only — a second live video
- * decoder next to the playing stream is more than many Google TV chips can do.
- */
-@Composable
-private fun PeekPanel(
-    streams: List<Stream>,
-    firstItem: FocusRequester,
-    onPick: (Stream) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // The panel can open before the list has loaded; take focus as soon as there is a first card to take it.
-    LaunchedEffect(streams.isNotEmpty()) {
-        if (streams.isNotEmpty()) {
-            try {
-                firstItem.requestFocus()
-            } catch (_: IllegalStateException) {
-                // not attached this frame
-            }
-        }
-    }
-    Column(
-        modifier
-            .fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color.Transparent, Palette.Scrim, Palette.Scrim)))
-            .padding(start = 48.dp, end = 48.dp, top = 40.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Peek — pick a channel to switch (Back to close)", style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
-        if (streams.isEmpty()) {
-            Text("Loading channels…", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
-        } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(streams, key = { it.userId }) { stream ->
-                    val isFirst = stream.userId == streams.first().userId
-                    FocusSurface(
-                        onClick = { onPick(stream) },
-                        modifier = Modifier.width(220.dp).let { if (isFirst) it.focusRequester(firstItem) else it },
-                    ) {
-                        Column {
-                            Box(Modifier.fillMaxWidth().height(124.dp)) {
-                                AsyncImage(
-                                    model = stream.thumbnail(320, 180),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                            Column(Modifier.padding(10.dp)) {
-                                Text(stream.userName, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    "${Format.count(stream.viewerCount)} · ${stream.gameName}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Palette.Muted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QualityMenu(
-    variants: List<Variant>,
-    current: String?,
-    selectedItem: FocusRequester,
-    onPick: (Variant?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier
-            .fillMaxHeight()
-            .width(320.dp)
-            .background(Palette.Scrim)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
-    ) {
-        Text("Quality", style = MaterialTheme.typography.titleLarge, color = Palette.OnBackground)
-        // Focus goes to the ticked row, or to Auto when nothing matches (audio-only, or a rung that is no longer offered).
-        val matched = variants.any { it.name == current }
-        QualityRow("Auto", current == "Auto", { onPick(null) }, if (!matched) Modifier.focusRequester(selectedItem) else Modifier)
-        for (v in variants) {
-            val selected = current == v.name
-            QualityRow(v.name, selected, { onPick(v) }, if (selected) Modifier.focusRequester(selectedItem) else Modifier)
-        }
-    }
-}
-
-@Composable
-private fun QualityRow(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    FocusSurface(onClick, modifier.fillMaxWidth(), focusedScale = 1.03f) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
-            if (selected) Text("✓", style = MaterialTheme.typography.titleSmall, color = Palette.BrandSoft)
-        }
-    }
 }
