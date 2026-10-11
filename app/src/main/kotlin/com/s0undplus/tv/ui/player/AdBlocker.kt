@@ -1,6 +1,7 @@
 package com.s0undplus.tv.ui.player
 
 import android.os.SystemClock
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -116,6 +117,8 @@ class AdBlocker(
     private var prefetchedAtMs = 0L
     private var swapAttempt: Deferred<AltStream?>? = null
     private var swapsThisBreak = 0
+    private var lastAdAtEdge = false
+    private var lastFetchFailed = false
 
     /**
      * Runs until cancelled. [watchUrl] returns the original stream's media playlist (null = nothing to watch yet);
@@ -153,8 +156,9 @@ class AdBlocker(
                 pollAlt()
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // A malformed playlist must never take the player down: treat this round as "no answer".
+                Log.w(TAG, "Ad check failed this round", e)
             }
             delay(POLL_MS)
         }
@@ -163,13 +167,24 @@ class AdBlocker(
     private suspend fun pollOriginal(url: String?) {
         if (url == null) return
         val requestedAt = SystemClock.elapsedRealtime()
-        val view = MediaPlaylistFetcher.view(http, url) ?: return
+        val view = MediaPlaylistFetcher.view(http, url)
+        if (view == null) {
+            if (!lastFetchFailed) Log.w(TAG, "No usable playlist from $url")
+            lastFetchFailed = true
+            return
+        }
+        lastFetchFailed = false
         val adAtEdge = AdBreakDetector.isAdAtEdge(view)
         val now = SystemClock.elapsedRealtime()
         // Entering is dated from when the request went out (the playlist can only have been older than that), so a slow
         // answer doesn't delay the hide; leaving is dated from when the answer arrived, where being late is the safe side.
         val planned = if (adAtEdge) AdBreakDetector.plannedDurationMs(view) else null
-        planner.onObservation(if (adAtEdge) requestedAt else now, adAtEdge, liveOffsetMs(), planned)
+        val lag = liveOffsetMs()
+        if (adAtEdge != lastAdAtEdge) {
+            lastAdAtEdge = adAtEdge
+            Log.i(TAG, "ad at the live edge: $adAtEdge (viewer is ${lag ?: "an unknown time"} ms behind live, planned ${planned ?: "?"} ms)")
+        }
+        planner.onObservation(if (adAtEdge) requestedAt else now, adAtEdge, lag, planned)
         // Resolve the ad-free copy as soon as the ad shows up at the live edge, so it is ready when it arrives.
         if (prefetch != null && !planner.isActive && now - prefetchedAtMs > PREFETCH_MAX_AGE_MS) dropPrefetch()
         if (adAtEdge && swapEnabled && prefetch == null && !planner.isActive && !planner.isLockedOut) {
@@ -225,6 +240,7 @@ class AdBlocker(
     }
 
     private fun CoroutineScope.enter() {
+        Log.i(TAG, "ad break reached the viewer: hiding${if (swapEnabled) ", looking for an ad-free copy" else ""}")
         state = AdState.Hiding
         swapsThisBreak = 0
         if (swapEnabled) trySwap()
@@ -256,6 +272,7 @@ class AdBlocker(
     }
 
     private fun exit() {
+        if (state != AdState.Idle) Log.i(TAG, "ad break over: back to the stream")
         dropPrefetch()
         swapAttempt?.cancel()
         swapAttempt = null
@@ -265,6 +282,8 @@ class AdBlocker(
     }
 
     private companion object {
+        const val TAG = "AdBlocker"
+
         /** A media playlist for live low-latency is a few hundred bytes of text; this is cheap and bounds ad-leak time. */
         const val POLL_MS = 2_000L
         const val TICK_MS = 250L

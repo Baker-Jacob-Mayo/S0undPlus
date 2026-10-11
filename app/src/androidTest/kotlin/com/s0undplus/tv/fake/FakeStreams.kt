@@ -32,6 +32,9 @@ object FakeStreams {
     /** "live/12" or "alt/12" for every segment the player has fetched, oldest first. */
     val segmentRequests = CopyOnWriteArrayList<String>()
 
+    /** Media-playlist requests as "live exoplayer" / "live okhttp": the player and the ad blocker both poll them. */
+    val playlistRequests = CopyOnWriteArrayList<String>()
+
     /** Master-playlist requests as "channel platform", e.g. "alpha android". */
     val masterRequests = CopyOnWriteArrayList<String>()
 
@@ -41,6 +44,7 @@ object FakeStreams {
         adUntilSeq = null
         segmentRequests.clear()
         masterRequests.clear()
+        playlistRequests.clear()
         FakeTwitch.on("/gql") {
             FakeTwitch.json("""{"data":{"streamPlaybackAccessToken":{"value":"{\"fake\":true}","signature":"fake-signature"}}}""")
         }
@@ -50,8 +54,14 @@ object FakeStreams {
             masterRequests += "$channel $platform"
             FakeTwitch.text(master(if (platform == "android") "alt" else "live"), contentType = MPEGURL)
         }
-        FakeTwitch.on("/hls/live/media.m3u8") { FakeTwitch.text(mediaPlaylist("live"), contentType = MPEGURL) }
-        FakeTwitch.on("/hls/alt/media.m3u8") { FakeTwitch.text(mediaPlaylist("alt"), contentType = MPEGURL) }
+        FakeTwitch.on("/hls/live/media.m3u8") { request ->
+            playlistRequests += "live ${who(request.headers["User-Agent"])}"
+            FakeTwitch.text(mediaPlaylist("live"), contentType = MPEGURL)
+        }
+        FakeTwitch.on("/hls/alt/media.m3u8") { request ->
+            playlistRequests += "alt ${who(request.headers["User-Agent"])}"
+            FakeTwitch.text(mediaPlaylist("alt"), contentType = MPEGURL)
+        }
         FakeTwitch.on("/hls/seg/") { request ->
             val parts = request.url.encodedPath.removePrefix("/hls/seg/").removeSuffix(".ts").split('/')
             val kind = parts[0]
@@ -60,6 +70,8 @@ object FakeStreams {
             segment(kind, seq)
         }
     }
+
+    private fun who(userAgent: String?): String = if (userAgent?.contains("ExoPlayer", ignoreCase = true) == true) "exoplayer" else "okhttp"
 
     /** The newest segment the playlist offers right now. */
     fun latestSeq(): Int = 3 + ((System.currentTimeMillis() - startMs) / SEGMENT_MS).toInt()

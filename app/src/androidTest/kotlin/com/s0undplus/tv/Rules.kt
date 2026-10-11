@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import com.s0undplus.tv.data.AppSettings
+import com.s0undplus.tv.fake.FakeStreams
 import com.s0undplus.tv.fake.FakeTwitch
 import com.s0undplus.twitch.auth.AuthTokens
 import kotlinx.coroutines.runBlocking
@@ -76,6 +77,7 @@ class FailureCapture(private val screenDump: () -> String) : TestWatcher() {
         Log.e(TAG, "FAILED $name: ${e?.message?.lineSequence()?.firstOrNull()?.take(300)}")
         val seen = FakeTwitch.requests.toList()
         Log.e(TAG, "$name: the fake server saw ${seen.size} requests; the last ones: ${seen.takeLast(30).joinToString(" | ")}")
+        Log.e(TAG, "$name: playlist polls by who: ${FakeStreams.playlistRequests.groupingBy { it }.eachCount()}; segments fetched: ${FakeStreams.segmentRequests.size}")
         Log.e(TAG, "$name: hosts the app tried that are not the fake: ${FakeTwitch.blockedHosts.distinct()}")
         for (line in screenDump().lineSequence().filter { it.isNotBlank() }.take(150)) Log.e(TAG, "$name: screen: ${line.take(200)}")
     }
