@@ -39,6 +39,9 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
 
+        // Emulator tests (androidTest) use their own runner, which swaps in an Application wired to a fake Twitch.
+        testInstrumentationRunner = "com.s0undplus.tv.TestRunner"
+
         // Your own Twitch application's client ID (https://dev.twitch.tv/console). See README.
         buildConfigField("String", "TWITCH_CLIENT_ID", "\"${setting("twitchClientId", "TWITCH_CLIENT_ID")}\"")
         // GitHub "owner/repo" whose latest release the in-app updater checks.
@@ -121,4 +124,14 @@ dependencies {
     implementation(libs.zxing.core)
 
     testImplementation(libs.junit4)
+
+    // Emulator tests: Compose UI testing, a fake Twitch server, and the AndroidX test runner.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.okhttp.mockwebserver)
+    // Hosts the empty activity createComposeRule() launches. Debug only; never in the release APK.
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

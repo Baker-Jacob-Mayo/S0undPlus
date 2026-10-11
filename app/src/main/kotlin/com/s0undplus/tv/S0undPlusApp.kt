@@ -9,8 +9,11 @@ import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 
-class S0undPlusApp : Application(), SingletonImageLoader.Factory {
-    val container: AppContainer by lazy { AppContainer(this) }
+open class S0undPlusApp : Application(), SingletonImageLoader.Factory {
+    val container: AppContainer by lazy { createContainer() }
+
+    /** Instrumented tests substitute a container wired to a local fake server; the app always uses the real one. */
+    protected open fun createContainer(): AppContainer = AppContainer(this)
 
     /** Shares the app's OkHttp client and can decode the animated GIF/WebP emotes that BTTV and 7TV serve. */
     override fun newImageLoader(context: PlatformContext): ImageLoader =

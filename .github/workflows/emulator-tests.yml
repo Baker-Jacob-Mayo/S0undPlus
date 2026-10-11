@@ -1,0 +1,90 @@
+name: Emulator tests
+
+# Boots an Android TV emulator and runs the instrumented tests in app/src/androidTest against a fake Twitch server that
+# lives on the emulator itself (nothing here talks to the real Twitch or the real internet).
+#
+# It is a workflow of its own so the quick Build checks stay independent of the slower, heavier emulator run.
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore: ['**.md']
+  pull_request:
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tv-emulator:
+    name: Android TV emulator tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # A fixed dummy so the app gets past its "configure a client ID" screen. The real secret is deliberately not used.
+      TWITCH_CLIENT_ID: ci-test-client-id
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-cleanup: never
+      - name: Ensure Android SDK platform 37 and build-tools
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-37" "build-tools;36.0.0" || true
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || echo "WARNING: no /dev/kvm; the emulator will not be usable"
+      - name: Choose a TV system image
+        id: image
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMANAGER" --list 2>/dev/null | grep -oE 'system-images;android-[0-9]+[^ |]*;(android-tv|google-tv);[a-z0-9_-]+' | sort -u | tee tv-images.txt
+          for candidate in "34 android-tv x86" "34 google-tv x86" "34 google-tv x86_64" "33 android-tv x86" "35 google-tv x86_64" "36 google-tv x86_64" "30 android-tv x86"; do
+            set -- $candidate
+            if grep -qx "system-images;android-$1;$2;$3" tv-images.txt; then
+              echo "Using API $1, target $2, arch $3"
+              { echo "api=$1"; echo "target=$2"; echo "arch=$3"; } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::None of the expected TV system images is available; see the list above."
+          exit 1
+      - name: Build the app and its test APK
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain
+      - name: Run the tests on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ steps.image.outputs.api }}
+          target: ${{ steps.image.outputs.target }}
+          arch: ${{ steps.image.outputs.arch }}
+          profile: tv_1080p
+          ram-size: 3072M
+          emulator-boot-timeout: 900
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/emulator-tests.sh
+      - name: Summary (results, crashes, screenshots)
+        if: always()
+        run: python3 scripts/summarize-emulator-results.py
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-results
+          path: |
+            emulator-results
+            app/build/reports/androidTests
+            app/build/outputs/androidTest-results
+            app/build/outputs/connected_android_test_additional_output
+          if-no-files-found: ignore
