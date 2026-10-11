@@ -5,7 +5,6 @@ import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.await
 import java.io.IOException
-import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -20,6 +19,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+
+/** Twitch answered the chat request with an error (e.g. "failed integrity check") rather than failing to answer. */
+class VodChatRefusedException(message: String) : IOException(message)
 
 data class VodChatPage(val messages: List<ChatMessage>, val nextCursor: String?, val hasNext: Boolean)
 
@@ -62,7 +64,7 @@ class VodChatApi(private val http: OkHttpClient, private val config: TwitchConfi
         val obj = (root as? JsonArray)?.firstOrNull() as? JsonObject ?: root as? JsonObject
             ?: throw IOException("Unexpected VOD chat response")
         (obj["errors"] as? JsonArray)?.firstOrNull()?.let { e ->
-            throw IOException(((e as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull ?: "VOD chat error")
+            throw VodChatRefusedException(((e as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull ?: "VOD chat error")
         }
         val comments = (((obj["data"] as? JsonObject)?.get("video") as? JsonObject)?.get("comments")) as? JsonObject
             ?: return VodChatPage(emptyList(), null, false)
@@ -184,10 +186,10 @@ class VodChatReplay(
             try {
                 accept(fetch(null, current), requestedSeconds = null)
                 return
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                byOffset = true // fall through and continue by time instead
+            } catch (_: VodChatRefusedException) {
+                // Twitch answered but refused the cursor: continue by time instead, from now on. Network failures are
+                // not caught here; they reach the caller, which retries with the cursor intact.
+                byOffset = true
             }
         }
         val from = nextOffsetSeconds

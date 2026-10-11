@@ -6,7 +6,6 @@ import android.media.AudioManager
 import android.os.SystemClock
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalActivity
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -88,6 +87,7 @@ import com.s0undplus.twitch.library.FavoriteChannel
 import com.s0undplus.twitch.library.HistoryEntry
 import com.s0undplus.twitch.playback.AutoRefreshPolicy
 import com.s0undplus.twitch.playback.PlaybackStream
+import com.s0undplus.twitch.playback.Variant
 import com.s0undplus.twitch.playback.QualityPreference
 import com.s0undplus.twitch.playback.RefreshMode
 import com.s0undplus.twitch.playback.RefreshStep
@@ -122,6 +122,8 @@ fun PlayerScreen(
     onExit: () -> Unit,
     onOpenChannel: (String) -> Unit,
     onSwitch: (PlayTarget) -> Unit,
+    /** Shared across player screens (see AppRoot), so switching streams doesn't reset the TV's refresh rate in between. */
+    frameRate: FrameRateSwitcher? = null,
 ) {
     val container = LocalAppContainer.current
     val bridge = LocalActivityBridge.current
@@ -203,9 +205,7 @@ fun PlayerScreen(
     val ready = (phase as? PlayerController.Phase.Ready)?.stream
     val readyVia = (phase as? PlayerController.Phase.Ready)?.via
 
-    // The TV's refresh rate follows the stream's frame rate (once per stream), and goes back to normal on leaving.
-    val activity = LocalActivity.current
-    val frameRate = remember(activity) { activity?.let(::FrameRateSwitcher) }
+    // The TV's refresh rate follows the stream's frame rate; AppRoot puts it back to normal on leaving playback.
     // The rate of the quality that will actually play: the one picked, or for Auto the source (what adaptive playback
     // settles on with a good connection). Renditions can differ: a 1080p50 source often comes with a 720p60 copy.
     val playedUrl = ready?.let { resolve(it, qualityChoice, audioOnly, settings.quality).second }
@@ -215,13 +215,13 @@ fun PlayerScreen(
     } ?: 0f
     LaunchedEffect(frameRate, playedUrl, streamFps, settings.matchFrameRate, audioOnly) {
         val switcher = frameRate ?: return@LaunchedEffect
-        if (settings.matchFrameRate && !audioOnly && ready != null && playedUrl != null) {
-            switcher.apply(playedUrl, streamFps)
-        } else {
-            switcher.reset()
+        when {
+            !settings.matchFrameRate || audioOnly -> switcher.reset()
+            // Loading or reconnecting: keep whatever mode is in force until the new stream says otherwise.
+            playedUrl == null -> Unit
+            else -> switcher.apply(playedUrl, streamFps)
         }
     }
-    DisposableEffect(frameRate) { onDispose { frameRate?.reset() } }
     // A stream that already came from the proxy list is expected to be ad-free, so only a direct stream is watched.
     val watchAds = isLive && settings.adMode != AdMode.OFF && !(settings.adMode == AdMode.PROXY && readyVia != null)
     val swapAds = settings.adMode == AdMode.HTTP_PROXY || settings.adMode == AdMode.VIDEO_SWAP
@@ -761,53 +761,6 @@ fun PlayerScreen(
                     }
                 }
 
-                if (controlsVisible && !bridge.inPip) {
-                    ControlsOverlay(
-                        target = target,
-                        title = headerTitle,
-                        isLive = isLive,
-                        playing = playing,
-                        qualityLabel = qualityLabel,
-                        chatOn = settings.chatVisible,
-                        audioOnly = audioOnly,
-                        pipSupported = bridge.pipSupported,
-                        isFavorite = isFavorite,
-                        showClock = settings.showClock,
-                        info = streamInfo,
-                        latencyMs = latencyMs,
-                        zoom = settings.zoomVideo,
-                        positionMs = positionMs,
-                        durationMs = durationMs,
-                        firstControl = firstControl,
-                        onPlayPause = ::togglePlayback,
-                        onSeek = ::seekBy,
-                        onQuality = { menu = Menu.Quality },
-                        onChat = ::toggleChat,
-                        onAudioOnly = { audioOnly = !audioOnly },
-                        onPip = {
-                            controlsVisible = false
-                            bridge.enterPip()
-                        },
-                        onPeek = ::openPeek,
-                        onFavorite = {
-                            val display = when (target) {
-                                is PlayTarget.Live -> target.displayName
-                                is PlayTarget.Vod -> target.channelName
-                            }
-                            val id = (target as? PlayTarget.Live)?.userId ?: (target as? PlayTarget.Vod)?.channelUserId
-                            uiScope.launch { container.settings.toggleFavorite(FavoriteChannel(channelLogin, display, id)) }
-                        },
-                        onChannel = { onOpenChannel(channelLogin) },
-                        onChatOnPhone = { showChatQr = true },
-                        onZoom = { uiScope.launch { container.settings.update { it.copy(zoomVideo = !it.zoomVideo) } } },
-                        onJumpToLive = {
-                            exo.seekToDefaultPosition()
-                            exo.play()
-                            controlsVisible = false
-                        },
-                        headerEndInset = if (chatShown && !side) CHAT_WIDTH else 0.dp,
-                    )
-                }
             }
 
             if (side) {
@@ -815,9 +768,58 @@ fun PlayerScreen(
             }
         }
 
+        // Over the whole screen, whichever chat layout: beside-video chat leaves too little width for the button row.
+        if (controlsVisible && !bridge.inPip) {
+            ControlsOverlay(
+                target = target,
+                title = headerTitle,
+                isLive = isLive,
+                playing = playing,
+                qualityLabel = qualityLabel,
+                chatOn = settings.chatVisible,
+                audioOnly = audioOnly,
+                pipSupported = bridge.pipSupported,
+                isFavorite = isFavorite,
+                showClock = settings.showClock,
+                info = streamInfo,
+                latencyMs = latencyMs,
+                zoom = settings.zoomVideo,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                firstControl = firstControl,
+                onPlayPause = ::togglePlayback,
+                onSeek = ::seekBy,
+                onQuality = { menu = Menu.Quality },
+                onChat = ::toggleChat,
+                onAudioOnly = { audioOnly = !audioOnly },
+                onPip = {
+                    controlsVisible = false
+                    bridge.enterPip()
+                },
+                onPeek = ::openPeek,
+                onFavorite = {
+                    val display = when (target) {
+                        is PlayTarget.Live -> target.displayName
+                        is PlayTarget.Vod -> target.channelName
+                    }
+                    val id = (target as? PlayTarget.Live)?.userId ?: (target as? PlayTarget.Vod)?.channelUserId
+                    uiScope.launch { container.settings.toggleFavorite(FavoriteChannel(channelLogin, display, id)) }
+                },
+                onChannel = { onOpenChannel(channelLogin) },
+                onChatOnPhone = { showChatQr = true },
+                onZoom = { uiScope.launch { container.settings.update { it.copy(zoomVideo = !it.zoomVideo) } } },
+                onJumpToLive = {
+                    exo.seekToDefaultPosition()
+                    exo.play()
+                    controlsVisible = false
+                },
+                headerEndInset = if (chatShown) CHAT_WIDTH else 0.dp,
+            )
+        }
         if (menu == Menu.Quality && ready != null) {
             QualityMenu(
-                variants = ready.variants.filter { !it.isAudioOnly },
+                // Best first: playlists list their rungs in no particular order.
+                variants = ready.variants.filter { !it.isAudioOnly }.sortedWith(compareByDescending<Variant> { it.height }.thenByDescending { it.frameRate }),
                 current = qualityLabel,
                 selectedItem = selectedQualityItem,
                 modifier = Modifier.align(Alignment.CenterEnd),

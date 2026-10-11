@@ -133,7 +133,12 @@ fun <T : Any> PagedGrid(
     itemContent: @Composable (item: T, modifier: Modifier) -> Unit,
 ) {
     val state by loader.state.collectAsStateWithLifecycle()
-    LaunchedEffect(loader) { loader.ensureFresh(REFRESH_AGE_MS) }
+    LaunchedEffect(loader) {
+        // A refresh replaces the list with its first page. Coming back to a card further down than that, keep the list
+        // as it is, or the card (and the viewer's place) would vanish.
+        val restoreIndex = restoreFocusKey?.let { key -> loader.state.value.items.indexOfFirst { itemKey(it) == key } } ?: -1
+        if (restoreIndex < SAFE_RESTORE_INDEX) loader.ensureFresh(REFRESH_AGE_MS)
+    }
 
     if (state.items.isEmpty()) {
         when {
@@ -189,6 +194,9 @@ fun <T : Any> PagedGrid(
 }
 
 private const val REFRESH_AGE_MS = 60_000L
+
+/** Cards before this index are on the first page of every list here, so a refresh keeps them. */
+private const val SAFE_RESTORE_INDEX = 12
 private const val LOAD_MORE_THRESHOLD = 8
 
 /** Invokes [onFocused] whenever this item (or a child) gains focus. */

@@ -267,20 +267,15 @@ class PlayerController(
     fun loadOthers() {
         if (_others.value.isNotEmpty() || _othersStatus.value == OthersStatus.Loading) return
         _othersStatus.value = OthersStatus.Loading
-        val current = when (target) {
-            is PlayTarget.Live -> target.login
-            is PlayTarget.Vod -> target.channelLogin
-        }
         scope.launch {
             try {
                 // In the followed list's own order, the channel on screen included: Channel +/- steps from its place.
+                // The list must not depend on which channel is on screen, or Channel +/- would step through a
+                // different order on every channel it lands on.
                 val followed = c.helix.followedStreams(first = 40).items
-                val otherFollowed = followed.count { !it.userLogin.equals(current, ignoreCase = true) }
-                val mode = c.settings.settings.first().otherChannels
-                _others.value = if (mode == OtherChannels.FOLLOWED || otherFollowed >= MIN_OTHERS) {
-                    followed
-                } else {
-                    (followed + c.helix.streams(first = 20).items).distinctBy { it.userId }
+                _others.value = when (c.settings.settings.first().otherChannels) {
+                    OtherChannels.FOLLOWED -> followed
+                    OtherChannels.FOLLOWED_AND_POPULAR -> (followed + c.helix.streams(first = 20).items).distinctBy { it.userId }
                 }
                 _othersStatus.value = OthersStatus.Loaded
             } catch (e: CancellationException) {
@@ -310,8 +305,6 @@ class PlayerController(
         /** One load works down the proxy list for at most this long before falling back to Twitch directly. */
         const val PROXY_BUDGET_MS = 20_000L
 
-        /** With "followed, then popular": fewer other followed channels live than this, and popular ones are added. */
-        const val MIN_OTHERS = 4
 
         const val STREAM_INFO_MIN_AGE_MS = 55_000L
 

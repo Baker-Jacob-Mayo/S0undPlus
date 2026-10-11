@@ -24,10 +24,18 @@ class FrameRateSwitcher(private val activity: Activity) {
         if (fps <= 0f || appliedFor == streamKey) return
         appliedFor = streamKey
         val display = display() ?: return
-        val target = pick(display.mode, display.supportedModes.toList(), fps)
-        val modeId = if (target == null || target.modeId == display.mode.modeId) 0 else target.modeId
-        Log.i(TAG, "stream at $fps fps on ${display.mode.refreshRate} Hz: " + if (modeId == 0) "no switch" else "switching to ${target?.refreshRate} Hz")
-        setPreferredMode(modeId)
+        val modes = display.supportedModes.toList()
+        // The mode in force is the one this app already asked for, if any (the display may not have switched yet).
+        val requested = activity.window.attributes.preferredDisplayModeId
+        val current = modes.firstOrNull { it.modeId == requested } ?: display.mode
+        if (fits(current.refreshRate, fps)) {
+            // Already suits, possibly because we chose it for the previous stream: leave the request alone.
+            Log.i(TAG, "stream at $fps fps: ${current.refreshRate} Hz already suits")
+            return
+        }
+        val target = pick(current, modes, fps)
+        Log.i(TAG, "stream at $fps fps on ${current.refreshRate} Hz: " + if (target == null) "nothing suits, using the default" else "switching to ${target.refreshRate} Hz")
+        setPreferredMode(target?.modeId ?: 0)
     }
 
     /** Back to the system's own choice (leaving the player, or the setting turned off). */

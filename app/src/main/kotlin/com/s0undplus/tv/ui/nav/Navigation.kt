@@ -2,6 +2,7 @@ package com.s0undplus.tv.ui.nav
 
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelStore
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.Video
 
@@ -42,23 +43,48 @@ fun Stream.toPlayTarget(): PlayTarget.Live =
 /**
  * A tiny back stack. Compose Navigation is in maintenance mode and this app has four destinations, so a list of
  * routes is clearer than a graph. Lives in a ViewModel so it survives configuration changes.
+ *
+ * Each entry has its own [ViewModelStore] (see [storeFor]): a screen's ViewModels live exactly as long as its place
+ * on the stack, so coming back to a page finds it as it was, while a later, separate visit to the same page starts
+ * fresh, and popped pages release their data.
  */
 class NavViewModel : ViewModel() {
-    val stack = mutableStateListOf<Route>(Route.Home)
+    private class Entry(val id: Long, val route: Route)
 
-    val current: Route get() = stack.last()
-    val canPop: Boolean get() = stack.size > 1
+    private var nextId = 0L
+    private val entries = mutableStateListOf(Entry(nextId++, Route.Home))
+    private val stores = HashMap<Long, ViewModelStore>()
+
+    val current: Route get() = entries.last().route
+
+    /** Identifies the top entry: two visits to the same route are different entries. */
+    val currentEntryId: Long get() = entries.last().id
+
+    val canPop: Boolean get() = entries.size > 1
 
     fun push(route: Route) {
-        stack.add(route)
+        entries.add(Entry(nextId++, route))
     }
 
     fun pop() {
-        if (canPop) stack.removeAt(stack.lastIndex)
+        if (canPop) release(entries.removeAt(entries.lastIndex))
     }
 
     /** Swaps the top screen (switching stream from the player shouldn't leave the old stream on the back stack). */
     fun replaceTop(route: Route) {
-        if (stack.isNotEmpty()) stack[stack.lastIndex] = route else stack.add(route)
+        if (entries.isNotEmpty()) release(entries.removeAt(entries.lastIndex))
+        entries.add(Entry(nextId++, route))
+    }
+
+    /** The ViewModels of one stack entry. */
+    fun storeFor(entryId: Long): ViewModelStore = stores.getOrPut(entryId) { ViewModelStore() }
+
+    private fun release(entry: Entry) {
+        stores.remove(entry.id)?.clear()
+    }
+
+    override fun onCleared() {
+        stores.values.forEach { it.clear() }
+        stores.clear()
     }
 }

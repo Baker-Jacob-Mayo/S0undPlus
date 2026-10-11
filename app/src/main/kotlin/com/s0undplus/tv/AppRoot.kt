@@ -1,6 +1,13 @@
 package com.s0undplus.tv
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import com.s0undplus.tv.ui.player.FrameRateSwitcher
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -90,6 +97,14 @@ private fun SignedInHost(userId: String, login: String) {
 
     BackHandler(enabled = nav.canPop) { nav.pop() }
 
+    // One switcher for the whole session, so going from one stream to the next (Channel +/-, peek, raids, a reconnect)
+    // keeps a suitable refresh rate instead of dropping to the default and switching back. Reset only on leaving playback.
+    val activity = LocalActivity.current
+    val frameRate = remember(activity) { activity?.let(::FrameRateSwitcher) }
+    val inPlayer = nav.current is Route.Play
+    LaunchedEffect(inPlayer) { if (!inPlayer) frameRate?.reset() }
+    DisposableEffect(frameRate) { onDispose { frameRate?.reset() } }
+
     when (val route = nav.current) {
         Route.Home -> HomeScreen(
             vm = home,
@@ -99,8 +114,8 @@ private fun SignedInHost(userId: String, login: String) {
             onOpenChannel = { nav.push(Route.Channel(it)) },
             onPlay = { nav.push(Route.Play(it)) },
         )
-        is Route.Category -> CategoryScreen(route.id, route.name) { nav.push(Route.Play(it.toPlayTarget())) }
-        is Route.Channel -> ChannelScreen(route.login) { nav.push(Route.Play(it)) }
+        is Route.Category -> EntryScope(nav) { CategoryScreen(route.id, route.name) { nav.push(Route.Play(it.toPlayTarget())) } }
+        is Route.Channel -> EntryScope(nav) { ChannelScreen(route.login) { nav.push(Route.Play(it)) } }
         // Keyed by target so switching channel (peek, channel +/-, raids) builds a fresh player, chat and sockets.
         is Route.Play -> key(route.target) {
             PlayerScreen(
@@ -108,8 +123,23 @@ private fun SignedInHost(userId: String, login: String) {
                 onExit = nav::pop,
                 onOpenChannel = { nav.push(Route.Channel(it)) },
                 onSwitch = { nav.replaceTop(Route.Play(it)) },
+                frameRate = frameRate,
             )
         }
+    }
+}
+
+/** Gives the screen of the top back-stack entry that entry's own ViewModels (see [NavViewModel.storeFor]). */
+@Composable
+private fun EntryScope(nav: NavViewModel, content: @Composable () -> Unit) {
+    val entryId = nav.currentEntryId
+    val owner = remember(entryId) {
+        object : ViewModelStoreOwner {
+            override val viewModelStore: ViewModelStore = nav.storeFor(entryId)
+        }
+    }
+    key(entryId) {
+        CompositionLocalProvider(LocalViewModelStoreOwner provides owner, content = content)
     }
 }
 

@@ -1,5 +1,7 @@
 package com.s0undplus.twitch.playback
 
+import kotlin.math.roundToInt
+
 /** One quality rung from a Twitch HLS master playlist. */
 data class Variant(
     /** Human label as Twitch names it, e.g. `1080p60 (source)`, `720p`, `Audio only`. */
@@ -60,19 +62,31 @@ object MasterPlaylist {
             (parts.getOrNull(0)?.toIntOrNull() ?: 0) to (parts.getOrNull(1)?.toIntOrNull() ?: 0)
         } ?: (0 to 0)
         val group = attrs["VIDEO"]
-        val fallback = if (height > 0) "${height}p" else Variant.AUDIO_ONLY_NAME
-        val name = when {
-            group == "audio_only" -> Variant.AUDIO_ONLY_NAME
-            group != null -> names[group] ?: group
+        val frameRate = attrs["FRAME-RATE"]?.toDoubleOrNull() ?: 0.0
+        // Twitch's newer (IVS) playlists name each rung in IVS-NAME (e.g. "1080p50") and flag the original with
+        // IVS-VARIANT-SOURCE="source", without the EXT-X-MEDIA names older ones carried.
+        val ivsName = attrs["IVS-NAME"] ?: attrs["STABLE-VARIANT-ID"]
+        val fallback = when {
+            height <= 0 -> Variant.AUDIO_ONLY_NAME
+            frameRate > 0 -> "${height}p${frameRate.roundToInt()}"
+            else -> "${height}p"
+        }
+        val base = when {
+            group == "audio_only" || ivsName == "audio_only" -> Variant.AUDIO_ONLY_NAME
+            group != null && names[group] != null -> names.getValue(group)
+            ivsName != null -> ivsName
+            group != null -> group
             else -> fallback
         }
+        val isSource = attrs["IVS-VARIANT-SOURCE"].equals("source", ignoreCase = true)
+        val name = if (isSource && !base.contains("(source)", ignoreCase = true)) "$base (source)" else base
         return Variant(
             name = name,
             url = url,
             bandwidth = attrs["BANDWIDTH"]?.toLongOrNull() ?: 0,
             width = width,
             height = height,
-            frameRate = attrs["FRAME-RATE"]?.toDoubleOrNull() ?: 0.0,
+            frameRate = frameRate,
             codecs = attrs["CODECS"].orEmpty(),
         )
     }

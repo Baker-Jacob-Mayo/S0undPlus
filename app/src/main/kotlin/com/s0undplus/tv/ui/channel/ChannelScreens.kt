@@ -139,8 +139,13 @@ class ChannelController(private val c: AppContainer, private val login: String, 
         }
     }
 
+    /** On coming back to the page: try again if it failed, otherwise re-check the live status if it is old. */
+    fun retryOrRefresh() {
+        if (_state.value is ChannelState.Failed) load() else refreshIfStale()
+    }
+
     /** Re-checks whether the channel is live when the page was loaded a while ago, without blanking the page. */
-    fun refreshIfStale() {
+    private fun refreshIfStale() {
         val loaded = _state.value as? ChannelState.Loaded ?: return
         if (System.currentTimeMillis() - loadedAtMs < STALE_MS) return
         loadedAtMs = System.currentTimeMillis()
@@ -182,7 +187,7 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
     val videoType = vm.videoType
     var showFollowQr by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { controller.refreshIfStale() }
+    LaunchedEffect(Unit) { controller.retryOrRefresh() }
     // A fresh visit starts on "Watch live" (or the video tabs when offline); coming back, the grid restores the card.
     val loaded = state is ChannelState.Loaded
     LaunchedEffect(loaded) {
@@ -222,7 +227,11 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                     for (type in VideoType.entries) {
                         PillButton(
                             type.label,
-                            { vm.videoType = type },
+                            {
+                                // Switching kind stays on the pill: the grid only restores focus when coming back.
+                                vm.focusedKeys.remove(type)
+                                vm.videoType = type
+                            },
                             // Offline channels start here (there is no "Watch live" to start on).
                             modifier = if (s.stream == null && type == videoType) Modifier.focusRequester(firstFocus) else Modifier,
                             selected = videoType == type,

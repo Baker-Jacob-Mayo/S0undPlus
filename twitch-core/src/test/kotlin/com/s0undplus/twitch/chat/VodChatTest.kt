@@ -187,7 +187,7 @@ class VodChatTest {
         suspend fun fetch(offsetSeconds: Int?, cursor: String?): VodChatPage {
             if (cursor != null) {
                 cursorCalls++
-                throw IOException("failed integrity check")
+                throw VodChatRefusedException("failed integrity check")
             }
             return inner.fetch(offsetSeconds, null)
         }
@@ -218,6 +218,32 @@ class VodChatTest {
         // The paging can't see beyond a page within one second, so some of the burst may be skipped, but it must not
         // stall there and must never repeat a message.
         assertTrue("after" in seen, seen.toString())
+        assertEquals(seen.distinct(), seen)
+    }
+
+    @Test
+    fun aNetworkFailureOnACursorPageKeepsTheCursorForTheRetry() = runBlocking {
+        val inner = FakeService((1..20).map { msg("m$it", it * 2_500L) })
+        var failNext = false
+        var offsetCallsAfterPriming = 0
+        var primed = false
+        val replay = VodChatReplay(
+            fetch = { offset, cursor ->
+                if (cursor != null && failNext) {
+                    failNext = false
+                    throw IOException("timeout")
+                }
+                if (cursor == null && primed) offsetCallsAfterPriming++
+                inner.fetch(offset, cursor).also { primed = true }
+            },
+            lookaheadMs = 10_000,
+            backfillMs = 0,
+        )
+        replay.advance(0)
+        failNext = true
+        assertFailsWith<IOException> { replay.advance(20_000) } // surfaces to the caller, which retries later
+        val seen = (20_000L..60_000L step 1_000L).flatMap { replay.advance(it) }.map { it.id }
+        assertEquals(0, offsetCallsAfterPriming) // still paging by cursor
         assertEquals(seen.distinct(), seen)
     }
 
