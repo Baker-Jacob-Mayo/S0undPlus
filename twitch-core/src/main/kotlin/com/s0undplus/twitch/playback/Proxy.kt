@@ -285,14 +285,14 @@ object ProxyHealth {
     /**
      * True when `/ping` answers with a JSON object that has a boolean `online` field. The *value* is deliberately not
      * checked: at least one of these services answers `{"online": false}` while serving streams fine, so only "it
-     * answers sensibly" counts. At most [MAX_BODY_BYTES] of the answer are read, off the caller's thread.
+     * answers sensibly" counts. An answer larger than [MAX_BODY_BYTES] counts as no answer.
      */
     suspend fun responds(http: OkHttpClient, template: String): Boolean {
         val url = ProxyUrls.pingUrl(template) ?: return false
         val client = http.newBuilder().callTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
         return try {
             withContext(Dispatchers.IO) {
-                client.newCall(Request.Builder().url(url).build()).await().use { response ->
+                client.newCall(Request.Builder().url(url).build()).await(MAX_BODY_BYTES).use { response ->
                     if (!response.isSuccessful) return@use false
                     val body = response.peekBody(MAX_BODY_BYTES).string()
                     val online = (TwitchJson.parseToJsonElement(body) as? JsonObject)?.get("online") as? JsonPrimitive

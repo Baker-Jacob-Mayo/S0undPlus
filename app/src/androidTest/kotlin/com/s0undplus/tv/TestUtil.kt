@@ -74,3 +74,15 @@ fun awaitCondition(description: String, timeoutMs: Long = 10_000, condition: () 
     }
     if (!condition()) throw AssertionError("Timed out after ${timeoutMs}ms waiting for: $description")
 }
+
+/**
+ * While a text field is being edited its blinking cursor keeps compose "busy" for ever under the test clock, so the
+ * tests that edit take the clock into their own hands: set `mainClock.autoAdvance = false`, then use these.
+ */
+fun ComposeTestRule.pump(ms: Long = 250) = mainClock.advanceTimeBy(ms)
+
+/** A key press delivered without waiting for compose to go idle; time is then advanced by hand. */
+fun ComposeTestRule.pressAndPump(keyCode: Int, ms: Long = 300) {
+    InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(keyCode)
+    pump(ms)
+}

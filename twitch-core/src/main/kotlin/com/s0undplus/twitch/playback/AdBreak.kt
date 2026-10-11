@@ -196,7 +196,7 @@ object MediaPlaylistFetcher {
         val client = ProxyClients.withCallTimeout(http, timeoutMs)
         return try {
             withContext(Dispatchers.IO) {
-                client.newCall(request).await().use { response ->
+                client.newCall(request).await(MAX_BODY_BYTES).use { response ->
                     if (response.isSuccessful) MediaPlaylistParser.view(response.peekBody(MAX_BODY_BYTES).string()) else null
                 }
             }

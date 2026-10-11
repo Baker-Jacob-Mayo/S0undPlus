@@ -135,9 +135,9 @@ class PlaybackApi(
         onForbidden: (() -> IOException)? = null,
     ): PlaybackStream {
         val request = Request.Builder().url(url).build()
-        client.newCall(request).await().use { response ->
-            // A playlist is a few kilobytes; never buffer more than a megabyte of whatever a proxy sends back.
-            val text = response.peekBody(MAX_PLAYLIST_BYTES).string()
+        // A playlist is a few kilobytes; a proxy that sends back more than a megabyte is not sending a playlist.
+        client.newCall(request).await(MAX_PLAYLIST_BYTES).use { response ->
+            val text = response.body.string()
             if (response.code == 404) throw onNotFound()
             if (response.code == 403 && onForbidden != null) throw onForbidden()
             if (!response.isSuccessful) throw TwitchApiException(response.code, "Playlist request failed", text)

@@ -25,6 +25,8 @@ import com.s0undplus.tv.awaitCondition
 import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.openSettingsTab
 import com.s0undplus.tv.press
+import com.s0undplus.tv.pressAndPump
+import com.s0undplus.tv.pump
 import com.s0undplus.tv.pressBack
 import com.s0undplus.tv.pressDown
 import com.s0undplus.tv.pressSelect
@@ -109,20 +111,28 @@ class SettingsTest {
     @Test
     fun aTypedBlockedWordIsSavedAndStillThereAfterScrollingAwayAndBack() {
         compose.openSettingsTab()
-        val list = compose.onNode(hasScrollToNodeAction())
-        val label = hasText("Blocked words (comma separated)")
-        list.performScrollToNode(label)
-        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("spoiler")
-        awaitCondition("the blocked word is stored") { stored().blockedWords == "spoiler" }
+        compose.pressDown()
+        compose.pressUntilFocused(KeyEvent.KEYCODE_DPAD_DOWN, hasText("e.g. spoiler, giveaway"), maxPresses = 30)
 
-        // Far enough away that the text field leaves composition, then back: it must show what was saved, not the
-        // value it was first built with (the regression the "saveable" state fixed).
+        // While a field is being edited its blinking cursor keeps compose "busy" under the test clock: drive time by hand.
+        compose.mainClock.autoAdvance = false
+        compose.pressAndPump(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("spoiler")
+        compose.pump(1_500) // past the 500 ms save delay, which runs on compose's clock
+        awaitCondition("the blocked word is stored") { stored().blockedWords == "spoiler" }
+        compose.pressAndPump(KeyEvent.KEYCODE_BACK) // closes the keyboard
+        compose.pressAndPump(KeyEvent.KEYCODE_BACK) // leaves editing
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+
+        // Far enough away that the field leaves composition, then back: it must show what was saved, not the value it
+        // was first built with (the regression the "saveable" state fixed).
+        val list = compose.onNode(hasScrollToNodeAction())
         list.performScrollToNode(hasText("About"))
         compose.waitForIdle()
-        list.performScrollToNode(label)
-        compose.onAllNodes(hasSetTextAction())[0].assert(hasText("spoiler"))
-        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("spoiler, giveaway")
-        awaitCondition("the edited list is stored") { stored().blockedWords == "spoiler, giveaway" }
+        list.performScrollToNode(hasText("Blocked words (comma separated)"))
+        compose.waitForNode(hasText("spoiler"), description = "the saved word shown in its field after scrolling back")
+        assertEquals("spoiler", stored().blockedWords)
     }
 
     @Test
