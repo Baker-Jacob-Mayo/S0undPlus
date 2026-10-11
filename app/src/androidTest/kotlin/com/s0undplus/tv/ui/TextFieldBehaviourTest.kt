@@ -1,6 +1,7 @@
 package com.s0undplus.tv.ui
 
 import android.view.KeyEvent
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -12,6 +13,7 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.text.TextRange
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.s0undplus.tv.FailureCapture
 import com.s0undplus.tv.HermeticRule
@@ -78,6 +80,8 @@ class TextFieldBehaviourTest {
         compose.pressUntilFocused(KeyEvent.KEYCODE_DPAD_DOWN, hasText("spoiler"), maxPresses = 30)
         compose.mainClock.autoAdvance = false
         compose.pressAndPump(KeyEvent.KEYCODE_DPAD_CENTER) // starts editing
+        val selection = compose.onAllNodes(hasSetTextAction())[0].fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange]
+        assertEquals("the cursor starts after the existing text", TextRange("spoiler".length), selection)
         compose.onAllNodes(hasSetTextAction())[0].performTextInput("X")
         compose.pump(1_500) // past the 500 ms save delay, which runs on compose's clock
         awaitCondition("the typed letter is stored after the old text") { stored().blockedWords == "spoilerX" }
