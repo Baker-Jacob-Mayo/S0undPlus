@@ -93,6 +93,8 @@ import com.s0undplus.twitch.playback.StallDetector
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -405,32 +407,36 @@ fun PlayerScreen(
         val swapOnly = previousAlt[0] != alt
         previousAlt[0] = alt
         val stream = alt?.stream ?: original // during an ad break the ad-free copy stands in for the original
-        val (label, url) = resolve(stream, qualityChoice, audioOnly, container.settings.settings.first().quality)
-        qualityLabel = label
-        val start = when {
-            isLive -> C.TIME_UNSET
-            exo.mediaItemCount > 0 -> exo.currentPosition // changing quality mid-VOD keeps your place
-            else -> (target as? PlayTarget.Vod)?.let { container.settings.vodPosition(it.id) } ?: C.TIME_UNSET
+        val preferredQuality = container.settings.settings.first().quality
+        // ExoPlayer may only be used on the main thread, and waiting for storage can resume this effect elsewhere.
+        withContext(Dispatchers.Main.immediate) {
+            val (label, url) = resolve(stream, qualityChoice, audioOnly, preferredQuality)
+            qualityLabel = label
+            val start = when {
+                isLive -> C.TIME_UNSET
+                exo.mediaItemCount > 0 -> exo.currentPosition // changing quality mid-VOD keeps your place
+                else -> (target as? PlayTarget.Vod)?.let { container.settings.vodPosition(it.id) } ?: C.TIME_UNSET
+            }
+            val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build()
+            val proxiedMedia = alt?.source?.mediaClient(container.http)
+            when {
+                // The HTTP proxy is meant to serve this stream's media playlists, so the player must fetch them through it.
+                proxiedMedia != null ->
+                    exo.setMediaSource(HlsMediaSource.Factory(OkHttpDataSource.Factory(proxiedMedia)).createMediaSource(item), start)
+                // A stream that came from a proxy fails over quickly: one retry, not Media3's default three.
+                readyVia != null && alt == null -> exo.setMediaSource(
+                    HlsMediaSource.Factory(OkHttpDataSource.Factory(container.http))
+                        .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(1))
+                        .createMediaSource(item),
+                    start,
+                )
+                else -> exo.setMediaItem(item, start)
+            }
+            exo.prepare()
+            // Switching to or from the ad-free copy keeps whatever the viewer had chosen (a pause stays a pause).
+            if (!swapOnly) exo.play()
+            playerError = null
         }
-        val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build()
-        val proxiedMedia = alt?.source?.mediaClient(container.http)
-        when {
-            // The HTTP proxy is meant to serve this stream's media playlists, so the player must fetch them through it.
-            proxiedMedia != null ->
-                exo.setMediaSource(HlsMediaSource.Factory(OkHttpDataSource.Factory(proxiedMedia)).createMediaSource(item), start)
-            // A stream that came from a proxy fails over quickly: one retry, not Media3's default three.
-            readyVia != null && alt == null -> exo.setMediaSource(
-                HlsMediaSource.Factory(OkHttpDataSource.Factory(container.http))
-                    .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(1))
-                    .createMediaSource(item),
-                start,
-            )
-            else -> exo.setMediaItem(item, start)
-        }
-        exo.prepare()
-        // Switching to or from the ad-free copy keeps whatever the viewer had chosen (a pause stays a pause).
-        if (!swapOnly) exo.play()
-        playerError = null
     }
 
     // Viewer count, uptime and title are fetched only while the controls are on screen, and at most once a minute.
@@ -444,31 +450,37 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(exo) {
-        while (true) {
-            positionMs = exo.currentPosition
-            durationMs = exo.duration.takeIf { it != C.TIME_UNSET } ?: 0L
-            latencyMs = if (isLive) exo.currentLiveOffset.takeIf { it != C.TIME_UNSET } else null
-            delay(if (controlsVisible) 500 else 5_000)
+        withContext(Dispatchers.Main.immediate) {
+            while (true) {
+                positionMs = exo.currentPosition
+                durationMs = exo.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+                latencyMs = if (isLive) exo.currentLiveOffset.takeIf { it != C.TIME_UNSET } else null
+                delay(if (controlsVisible) 500 else 5_000)
+            }
         }
     }
 
     if (isLive) {
         // A stream that sits in "buffering" without erroring is the commonest way Twitch streams die: catch it.
         LaunchedEffect(exo) {
-            while (true) {
-                delay(2_000)
-                if (stall.isStalled(SystemClock.elapsedRealtime())) {
-                    stall.onProgress()
-                    streamProblem()
+            withContext(Dispatchers.Main.immediate) {
+                while (true) {
+                    delay(2_000)
+                    if (stall.isStalled(SystemClock.elapsedRealtime())) {
+                        stall.onProgress()
+                        streamProblem()
+                    }
                 }
             }
         }
     } else {
         LaunchedEffect(exo) {
-            controller.startReplay { exo.currentPosition }
-            while (true) {
-                delay(20_000)
-                saveProgress()
+            withContext(Dispatchers.Main.immediate) {
+                controller.startReplay { exo.currentPosition }
+                while (true) {
+                    delay(20_000)
+                    saveProgress()
+                }
             }
         }
     }
