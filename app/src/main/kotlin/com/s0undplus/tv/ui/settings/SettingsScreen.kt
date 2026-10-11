@@ -2,6 +2,7 @@ package com.s0undplus.tv.ui.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,11 +27,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
@@ -437,6 +441,7 @@ private fun adBlurb(mode: AdMode): String = when (mode) {
 }
 
 /** Every broadcast language in one list, with the current one ticked and focused, instead of cycling through them. */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun LanguageDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
     val focus = remember { FocusRequester() }
@@ -452,6 +457,9 @@ private fun LanguageDialog(current: String, onPick: (String) -> Unit, onDismiss:
     Box(Modifier.fillMaxSize().background(Palette.Scrim), contentAlignment = Alignment.Center) {
         Column(
             Modifier
+                // The D-pad must not wander out to the settings rows behind the scrim.
+                .focusProperties { exit = { FocusRequester.Cancel } }
+                .focusGroup()
                 .fillMaxWidth(0.45f)
                 .heightIn(max = 560.dp)
                 .clip(RoundedCornerShape(20.dp))
@@ -492,8 +500,10 @@ private fun SavedTextField(
     onSave: (String) -> Unit,
     filter: (String) -> String = { it },
 ) {
-    var text by remember { mutableStateOf(initial) }
-    var saved by remember { mutableStateOf(initial) }
+    // Saveable, because a LazyColumn row is disposed when it scrolls off-screen: plain `remember` would rebuild the field
+    // from the (older) value it was first given and the next keystroke would overwrite what was just saved.
+    var text by rememberSaveable { mutableStateOf(initial) }
+    var saved by rememberSaveable { mutableStateOf(initial) }
     val latestSave by rememberUpdatedState(onSave)
 
     fun commit() {

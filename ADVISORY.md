@@ -536,9 +536,12 @@ Answers change what is worth doing next.
 
 ## 10. Implementation status (2026-10-11)
 
-Added by the session that worked through this document, so the next person doesn't redo or second-guess it. Each
-item is its own commit, with the item ID in the message. Every claim in the advisory was checked against the code
-first; where it was wrong or needed adjusting, that is said here.
+Added by the session that worked through this document, so the next person doesn't redo or second-guess it. The
+rule above asks for one item per commit. Most items were; two commits were batched on purpose, because CI is the only
+Android compiler (a few minutes per run) and the app-side items could not be compiled locally: `0c11d17` carries
+P1-1, P1-2, P1-3 (player half), P1-5 (parts 2 and 3), P2-4 and P2-6 together with the review fixes, and `ab06d09`
+carries P3-1, P3-3 (app half), P3-8, P3-10 and P3-11. Every claim in the advisory was checked against the code first;
+where it was wrong or needed adjusting, that is said here.
 
 | ID | Status | Notes |
 |---|---|---|

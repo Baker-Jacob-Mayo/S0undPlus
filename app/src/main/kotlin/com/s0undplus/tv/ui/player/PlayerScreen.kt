@@ -327,6 +327,7 @@ fun PlayerScreen(
                 when (playbackState) {
                     Player.STATE_BUFFERING -> stall.onBuffering(SystemClock.elapsedRealtime())
                     Player.STATE_READY -> {
+                        if (audioOnly) altShowing = true // audio-only draws no frame to wait for
                         stall.onProgress()
                         playerError = null
                         endedNote = null
