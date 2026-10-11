@@ -17,7 +17,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.s0undplus.tv.AppContainer
@@ -40,10 +42,14 @@ class PreviewController(
     context: Context,
     private val scope: CoroutineScope,
 ) {
-    val player: ExoPlayer = ExoPlayer.Builder(context).build().apply {
-        volume = 0f
-        playWhenReady = true
-    }
+    // Same OkHttp client as the rest of the app (one connection pool, one set of timeouts) instead of Media3's default stack.
+    val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(container.http)))
+        .build()
+        .apply {
+            volume = 0f
+            playWhenReady = true
+        }
 
     /** The channel a preview is being loaded/played for. */
     var activeLogin by mutableStateOf<String?>(null)
