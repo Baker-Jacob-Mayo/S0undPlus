@@ -22,9 +22,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,11 +65,6 @@ fun TvTextField(
                     returnFocusToRow = true
                     onSubmit()
                 },
-                // Backing out is not submitting: it leaves whatever was typed in place and does nothing else.
-                onBack = {
-                    editing = false
-                    returnFocusToRow = true
-                },
                 onFocusLost = { editing = false },
             )
         } else {
@@ -112,7 +105,6 @@ private fun Editor(
     hint: String,
     imeAction: ImeAction,
     onDone: () -> Unit,
-    onBack: () -> Unit,
     onFocusLost: () -> Unit,
 ) {
     val focus = remember { FocusRequester() }
@@ -121,7 +113,7 @@ private fun Editor(
     val shape = RoundedCornerShape(12.dp)
 
     // With the keyboard already hidden by the first Back, a second Back leaves editing instead of leaving the screen.
-    BackHandler(onBack = onBack)
+    BackHandler(onBack = onDone)
     LaunchedEffect(Unit) {
         try {
             focus.requestFocus() // gaining focus is what opens the keyboard
@@ -130,17 +122,9 @@ private fun Editor(
         }
     }
 
-    // Editing starts with the cursor after the existing text (the plain-String overload would put it at the start, so
-    // anything typed would land in front of what was already there).
-    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
-    val shown = if (field.text == value) field else TextFieldValue(value, TextRange(value.length))
-
     BasicTextField(
-        value = shown,
-        onValueChange = {
-            field = it
-            if (it.text != value) onValueChange(it.text)
-        },
+        value = value,
+        onValueChange = onValueChange,
         singleLine = true,
         textStyle = TextStyle(color = Palette.OnBackground, fontSize = 22.sp),
         cursorBrush = SolidColor(Palette.Brand),

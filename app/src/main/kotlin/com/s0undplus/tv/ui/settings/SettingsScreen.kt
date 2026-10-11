@@ -239,16 +239,14 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                             PillButton("Remove", { editProxies { cur -> cur.filterNot { it.template == entry.template } } })
                         }
                     }
-                    // Keyed: they follow a list that grows and shrinks, and by position they would be a different item
-                    // (and lose their state and focus) every time a proxy is added or removed.
-                    item(key = "add-proxy-field") {
+                    item {
                         Label("Add a proxy address (https, with \$channel in it). Entries are tried top to bottom.")
                         TvTextField(newProxy, { newProxy = it; proxyError = null }, "e.g. proxy.example/live/\$channel", onSubmit = ::addProxy)
                     }
                     proxyError?.let { message ->
-                        item(key = "add-proxy-error") { Text(message, style = MaterialTheme.typography.bodySmall, color = Palette.BrandSoft) }
+                        item { Text(message, style = MaterialTheme.typography.bodySmall, color = Palette.BrandSoft) }
                     }
-                    item(key = "add-proxy-buttons") {
+                    item {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             PillButton("Add", ::addProxy)
                             PillButton(if (checkingProxies) "Checking…" else "Check which are online", ::checkProxies)
