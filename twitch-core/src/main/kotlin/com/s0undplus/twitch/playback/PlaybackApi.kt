@@ -64,7 +64,7 @@ class PlaybackApi(
         val platform = PlayerTypes.normalizePlatform(options.platform)
         val token = requestToken(
             client, isLive = true, login = channel, vodId = "",
-            playerType = options.playerType, platform = platform,
+            playerType = options.playerType, platform = platform, freshDeviceId = options.freshDeviceId,
         )
         return load(client, liveMasterUrl(channel, token, platform), onNotFound = { ChannelOfflineException(channel) })
     }
@@ -123,11 +123,14 @@ class PlaybackApi(
     private suspend fun load(client: OkHttpClient, url: HttpUrl, onNotFound: () -> IOException): PlaybackStream {
         val request = Request.Builder().url(url).build()
         client.newCall(request).await().use { response ->
-            val text = response.body.string()
+            // A playlist is a few kilobytes; never buffer more than a megabyte of whatever a proxy sends back.
+            val text = response.peekBody(MAX_PLAYLIST_BYTES).string()
             if (response.code == 404) throw onNotFound()
             if (!response.isSuccessful) throw TwitchApiException(response.code, "Playlist request failed", text)
-            // A rewriting proxy may hand back relative rung URLs; make them absolute so each plays on its own.
-            val variants = MasterPlaylist.parse(text).map { it.copy(url = url.resolve(it.url)?.toString() ?: it.url) }
+            // A rewriting proxy may hand back relative rung URLs; make them absolute, against the URL the playlist was
+            // actually served from (after any redirect), so each rung plays on its own.
+            val base = response.request.url
+            val variants = MasterPlaylist.parse(text).map { it.copy(url = base.resolve(it.url)?.toString() ?: it.url) }
             if (variants.isEmpty()) throw IOException("Twitch returned a playlist with no qualities")
             return PlaybackStream(url.toString(), variants)
         }
@@ -144,6 +147,7 @@ class PlaybackApi(
         vodId: String,
         playerType: String,
         platform: String,
+        freshDeviceId: Boolean = false,
     ): PlaybackToken {
         val variables = buildJsonObject {
             put("isLive", isLive)
@@ -170,10 +174,13 @@ class PlaybackApi(
                 put("variables", variables)
             },
         )
+        // The Android identity is asked for with the Android client ID (as Xtra pairs them); everything else uses the web one.
+        val clientId = if (platform == PlayerTypes.ANDROID) config.androidClientId else config.webClientId
+        val deviceId = if (freshDeviceId) randomDeviceId() else config.deviceId
         var lastFailure: IOException? = null
         for (body in attempts) {
             try {
-                return postGql(client, body, isLive)
+                return postGql(client, body, isLive, clientId, deviceId)
             } catch (e: TwitchApiException) {
                 lastFailure = e
             } catch (e: GqlTokenException) {
@@ -185,11 +192,20 @@ class PlaybackApi(
 
     private class GqlTokenException(message: String) : IOException(message)
 
-    private suspend fun postGql(client: OkHttpClient, body: JsonObject, isLive: Boolean): PlaybackToken {
+    /** A new random 32-hex id, like the one a browser makes for a fresh session. */
+    private fun randomDeviceId(): String = buildString(32) { repeat(32) { append("0123456789abcdef"[random.nextInt(16)]) } }
+
+    private suspend fun postGql(
+        client: OkHttpClient,
+        body: JsonObject,
+        isLive: Boolean,
+        clientId: String,
+        deviceId: String,
+    ): PlaybackToken {
         val request = Request.Builder()
             .url(config.gqlUrl)
-            .header("Client-ID", config.webClientId)
-            .header("X-Device-Id", config.deviceId)
+            .header("Client-ID", clientId)
+            .header("X-Device-Id", deviceId)
             .post(body.toString().toRequestBody(JSON))
             .build()
         client.newCall(request).await().use { response ->
@@ -213,6 +229,8 @@ class PlaybackApi(
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+
+        const val MAX_PLAYLIST_BYTES = 1024L * 1024
 
         const val PERSISTED_HASH = "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9"
 

@@ -10,6 +10,8 @@ import java.net.SocketAddress
 import java.net.URI
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Credentials
@@ -59,7 +61,10 @@ data class HttpProxy(
     val proxyMultivariant: Boolean = false,
     val proxyMedia: Boolean = true,
 ) {
-    val isValid: Boolean get() = host.isNotBlank() && port in 1..65535
+    /** A bare host name or address and a real port: no scheme, path or spaces (those fail later, silently, as a DNS error). */
+    val isValid: Boolean
+        get() = host.isNotBlank() && port in 1..65535 &&
+            host.none { it.isWhitespace() || it == '/' } && !host.contains("://")
 }
 
 /** Which request hosts count as "token", "master playlist" and "media playlist" when deciding what an [HttpProxy] carries. */
@@ -106,6 +111,8 @@ data class PlaybackOptions(
     val route: PlaybackRoute = PlaybackRoute.Direct,
     val playerType: String = PlayerTypes.SITE,
     val platform: String = PlayerTypes.WEB,
+    /** Send a new random device id with the token request instead of this install's stable one (what Xtra's swap does). */
+    val freshDeviceId: Boolean = false,
 )
 
 /** The client that carries this route's requests, derived from [base] so connection pools and settings are shared. */
@@ -121,7 +128,7 @@ object ProxyClients {
     private const val CONNECT_TIMEOUT_SECONDS = 8L
 
     /** Whole-request limit for a custom proxy playlist; the app's normal 15 s connect / 30 s read would stall far too long. */
-    const val CUSTOM_URL_TIMEOUT_MS = 8_000L
+    const val CUSTOM_URL_TIMEOUT_MS = 5_000L
 
     fun withCallTimeout(base: OkHttpClient, timeoutMs: Long): OkHttpClient =
         base.newBuilder().callTimeout(timeoutMs, TimeUnit.MILLISECONDS).build()
@@ -172,11 +179,20 @@ object ProxyUrls {
             .filter { it.isNotEmpty() && isUsable(it) }
             .distinct()
 
-    fun isUsable(template: String): Boolean =
-        template.contains(CHANNEL_PLACEHOLDER) && expand(template, "channel")?.scheme == "https"
+    fun isUsable(template: String): Boolean {
+        // Whitespace would be percent-encoded into a "valid" URL, e.g. two pasted addresses fused into one entry.
+        if (!template.contains(CHANNEL_PLACEHOLDER) || template.any { it.isWhitespace() }) return false
+        val a = expand(template, "channel_a") ?: return false
+        val b = expand(template, "channel_b") ?: return false
+        // Two different channels must give two different addresses: `…/$channel/../../x` resolves to the same URL for
+        // everyone, which would send every channel to one playlist.
+        return a.scheme == "https" && a != b
+    }
+
+    private val SCHEME = Regex("^[A-Za-z][A-Za-z0-9+.-]*://")
 
     fun expand(template: String, channel: String): HttpUrl? {
-        val withScheme = if (template.contains("://")) template else "https://$template"
+        val withScheme = if (SCHEME.containsMatchIn(template)) template else "https://$template"
         return withScheme.replace(CHANNEL_PLACEHOLDER, channel).toHttpUrlOrNull()
     }
 
@@ -257,28 +273,31 @@ object ProxyEntryCodec {
                     null
                 }
             }
-            .distinct()
+            .distinctBy { it.platform to it.playerType } // one line per identity: the first one wins, enabled or not
             .toList()
 }
 
 /** Asks a custom proxy whether it is alive, the way Xtra's proxy list shows "Online" / "Offline". */
 object ProxyHealth {
     private const val TIMEOUT_SECONDS = 6L
+    private const val MAX_BODY_BYTES = 64L * 1024
 
     /**
      * True when `/ping` answers with a JSON object that has a boolean `online` field. The *value* is deliberately not
      * checked: at least one of these services answers `{"online": false}` while serving streams fine, so only "it
-     * answers sensibly" counts.
+     * answers sensibly" counts. At most [MAX_BODY_BYTES] of the answer are read, off the caller's thread.
      */
     suspend fun responds(http: OkHttpClient, template: String): Boolean {
         val url = ProxyUrls.pingUrl(template) ?: return false
         val client = http.newBuilder().callTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
         return try {
-            client.newCall(Request.Builder().url(url).build()).await().use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) return false
-                val online = (TwitchJson.parseToJsonElement(body) as? JsonObject)?.get("online") as? JsonPrimitive
-                online?.content == "true" || online?.content == "false"
+            withContext(Dispatchers.IO) {
+                client.newCall(Request.Builder().url(url).build()).await().use { response ->
+                    if (!response.isSuccessful) return@use false
+                    val body = response.peekBody(MAX_BODY_BYTES).string()
+                    val online = (TwitchJson.parseToJsonElement(body) as? JsonObject)?.get("online") as? JsonPrimitive
+                    online?.content == "true" || online?.content == "false"
+                }
             }
         } catch (e: CancellationException) {
             throw e

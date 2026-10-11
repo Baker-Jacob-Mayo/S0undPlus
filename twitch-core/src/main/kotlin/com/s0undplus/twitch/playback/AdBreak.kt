@@ -1,8 +1,11 @@
 package com.s0undplus.twitch.playback
 
 import com.s0undplus.twitch.await
+import java.time.DateTimeException
 import java.time.OffsetDateTime
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -57,13 +60,14 @@ object AdBreakDetector {
     /**
      * Playlists keep old DATERANGE tags for as long as their segments are retained, so a tag only counts while its
      * span overlaps the newest segment. With no wall-clock times to compare, only an open-ended range (no end or
-     * duration at all) is trusted as current.
+     * duration at all) is trusted as current. (Unlike Xtra, which ignores a range whose end it cannot work out, such an
+     * open-ended range counts here; the planner's safety cap is what ends a marker that never goes away.)
      */
     private fun coversNewestSegment(attrs: Map<String, String>, view: MediaPlaylistView): Boolean {
         val start = attrs["START-DATE"]?.let(::parseDate)
         val end = attrs["END-DATE"]?.let(::parseDate)
             ?: (attrs["DURATION"] ?: attrs["PLANNED-DURATION"])?.toDoubleOrNull()
-                ?.let { seconds -> start?.plus((seconds * 1000).toLong()) }
+                ?.let { seconds -> start?.let { plusMillis(it, seconds * 1000) } }
         val openEnded = end == null && attrs["END-DATE"] == null && attrs["DURATION"] == null &&
             attrs["PLANNED-DURATION"] == null
         val segStart = view.newestSegmentStartMs
@@ -74,11 +78,25 @@ object AdBreakDetector {
         return segEnd > start && segStart < end
     }
 
+    /** Null for anything unreadable, including years so far out that the epoch milliseconds don't fit in a Long. */
     internal fun parseDate(value: String): Long? =
         try {
             OffsetDateTime.parse(value).toInstant().toEpochMilli()
-        } catch (_: java.time.format.DateTimeParseException) {
+        } catch (_: DateTimeException) {
             null
+        } catch (_: ArithmeticException) {
+            null
+        }
+
+    private fun plusMillis(base: Long, millis: Double): Long? =
+        if (millis.isNaN() || millis.isInfinite()) {
+            null
+        } else {
+            try {
+                Math.addExact(base, millis.toLong())
+            } catch (_: ArithmeticException) {
+                null
+            }
         }
 }
 
@@ -139,17 +157,27 @@ object MediaPlaylistParser {
     }
 }
 
-/** Fetches a live media playlist and reads it; every failure is just "no answer this time". */
+/**
+ * Fetches a live media playlist and reads it; every failure is just "no answer this time". Each fetch has a hard
+ * [timeoutMs] limit (a stalled request would otherwise leave an ad audible, or the screen hidden, for as long as the
+ * stall lasts), reads at most [MAX_BODY_BYTES], and does its blocking body read off the caller's thread.
+ */
 object MediaPlaylistFetcher {
-    suspend fun view(http: OkHttpClient, url: String): MediaPlaylistView? {
+    const val TIMEOUT_MS = 4_000L
+    const val MAX_BODY_BYTES = 512L * 1024
+
+    suspend fun view(http: OkHttpClient, url: String, timeoutMs: Long = TIMEOUT_MS): MediaPlaylistView? {
         val request = try {
             Request.Builder().url(url).build()
         } catch (_: IllegalArgumentException) {
             return null
         }
+        val client = ProxyClients.withCallTimeout(http, timeoutMs)
         return try {
-            http.newCall(request).await().use { response ->
-                if (response.isSuccessful) MediaPlaylistParser.view(response.body.string()) else null
+            withContext(Dispatchers.IO) {
+                client.newCall(request).await().use { response ->
+                    if (response.isSuccessful) MediaPlaylistParser.view(response.peekBody(MAX_BODY_BYTES).string()) else null
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -171,39 +199,54 @@ object MediaPlaylistFetcher {
 class AdBreakPlanner(
     private val maxBreakMs: Long = MAX_BREAK_MS,
     private val enterLeadMs: Long = ENTER_LEAD_MS,
+    private val staleObservationMs: Long = STALE_OBSERVATION_MS,
 ) {
     enum class Action { None, Enter, Exit }
 
     var isActive: Boolean = false
         private set
 
+    /** True after the safety cap forced an exit and until the edge has been seen clean again. */
+    var isLockedOut: Boolean = false
+        private set
+
     private var activeSinceMs = 0L
+    private var lastObservationMs: Long? = null
+
+    // When the ad (or the clean edge after it) was first seen. The viewer reaches that point `lag` later, and the lag
+    // can change meanwhile (a pause or a seek to live), so the due times are recomputed from the *current* lag at every
+    // observation instead of being fixed once.
+    private var firstAdSeenMs: Long? = null
+    private var firstCleanSeenMs: Long? = null
     private var pendingEnterAtMs: Long? = null
     private var pendingExitAtMs: Long? = null
 
-    /** After the safety cap forces an exit, ignore ads until the edge has been seen clean (or a marker stuck on forever would re-trigger every cap). */
-    private var lockedOut = false
-
     /**
      * @param adAtEdge result of [AdBreakDetector.isAdAtEdge] for the newest playlist
-     * @param liveOffsetMs how far behind the live edge the viewer is, or null if the player can't say
+     * @param liveOffsetMs how far behind the live edge the viewer is, or null if the player can't say; values outside
+     * 0..[MAX_PLAUSIBLE_LAG_MS] (a skewed device clock, say) are treated as unknown
      */
     fun onObservation(nowMs: Long, adAtEdge: Boolean, liveOffsetMs: Long?) {
-        if (lockedOut) {
+        lastObservationMs = nowMs
+        val lag = liveOffsetMs?.takeIf { it in 0..MAX_PLAUSIBLE_LAG_MS }
+        if (isLockedOut) {
             if (adAtEdge) return
-            lockedOut = false
+            isLockedOut = false
         }
         if (adAtEdge) {
             // The ad is (still) at the edge, so a pending exit was a flap between playlist refreshes.
             pendingExitAtMs = null
-            if (!isActive && pendingEnterAtMs == null) {
+            firstCleanSeenMs = null
+            if (!isActive) {
+                val first = firstAdSeenMs ?: nowMs.also { firstAdSeenMs = it }
                 // Unknown lag: hide right away (a brief over-hide is harmless); the exit side waits a fixed time instead.
-                val lag = liveOffsetMs ?: 0L
-                pendingEnterAtMs = nowMs + maxOf(0L, lag - enterLeadMs)
+                pendingEnterAtMs = first + maxOf(0L, (lag ?: 0L) - enterLeadMs)
             }
-        } else if ((isActive || pendingEnterAtMs != null) && pendingExitAtMs == null) {
+        } else if (isActive || firstAdSeenMs != null) {
             // Short ads end at the edge before the viewer reaches them; the exit is still scheduled behind the entry.
-            pendingExitAtMs = nowMs + (liveOffsetMs ?: UNKNOWN_LAG_EXIT_MS)
+            val clean = firstCleanSeenMs ?: nowMs.also { firstCleanSeenMs = it }
+            pendingExitAtMs = clean + (lag ?: UNKNOWN_LAG_EXIT_MS)
+            firstAdSeenMs?.let { pendingEnterAtMs = it + maxOf(0L, (lag ?: 0L) - enterLeadMs) }
         }
     }
 
@@ -211,7 +254,13 @@ class AdBreakPlanner(
     fun poll(nowMs: Long): Action {
         if (isActive && nowMs - activeSinceMs >= maxBreakMs) {
             clear()
-            lockedOut = true
+            isLockedOut = true
+            return Action.Exit
+        }
+        // Nothing has been learned for a while (failed or hung playlist fetches): don't stay hidden on stale information.
+        // If the ad is still there, the next observation simply starts a new break.
+        if (isActive && lastObservationMs?.let { nowMs - it >= staleObservationMs } == true) {
+            clear()
             return Action.Exit
         }
         val enterDue = pendingEnterAtMs?.let { nowMs >= it } == true
@@ -219,8 +268,7 @@ class AdBreakPlanner(
         return when {
             exitDue && !isActive -> {
                 // The whole ad passed between two polls (or before the entry fired): nothing left to hide.
-                pendingEnterAtMs = null
-                pendingExitAtMs = null
+                clear()
                 Action.None
             }
             exitDue -> {
@@ -229,6 +277,7 @@ class AdBreakPlanner(
             }
             enterDue && !isActive -> {
                 pendingEnterAtMs = null
+                firstAdSeenMs = null
                 isActive = true
                 activeSinceMs = nowMs
                 Action.Enter
@@ -240,11 +289,14 @@ class AdBreakPlanner(
     /** Forget everything, e.g. because the player was re-pointed at a new item and the old timeline no longer applies. */
     fun reset() {
         clear()
-        lockedOut = false
+        isLockedOut = false
+        lastObservationMs = null
     }
 
     private fun clear() {
         isActive = false
+        firstAdSeenMs = null
+        firstCleanSeenMs = null
         pendingEnterAtMs = null
         pendingExitAtMs = null
     }
@@ -258,5 +310,11 @@ class AdBreakPlanner(
 
         /** When the player can't report its lag, wait this long before treating a clean edge as the end of the ad. */
         const val UNKNOWN_LAG_EXIT_MS = 6_000L
+
+        /** A live lag outside 0..this is not believable; it is ignored rather than trusted. */
+        const val MAX_PLAUSIBLE_LAG_MS = 60_000L
+
+        /** A break with no playlist observation for this long is ended instead of trusting what was last known. */
+        const val STALE_OBSERVATION_MS = 30_000L
     }
 }

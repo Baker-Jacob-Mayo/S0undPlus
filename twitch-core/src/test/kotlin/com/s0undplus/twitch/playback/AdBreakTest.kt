@@ -119,6 +119,17 @@ class AdBreakDetectorTest {
     }
 
     @Test
+    fun datesSoFarOutThatTheyOverflowNeverCrashDetection() {
+        val farFuture = range("""ID="stitched-ad-1",START-DATE="+999999999-12-31T23:59:59Z",DURATION=30""")
+        val farPast = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",END-DATE="-999999999-01-01T00:00:00Z"""")
+        val hugeDuration = range("""ID="stitched-ad-1",START-DATE="2026-01-01T12:00:00Z",DURATION=1e30""")
+        for (tag in listOf(farFuture, farPast, hugeDuration)) {
+            assertFalse(AdBreakDetector.isAdAtEdge(view(tags = listOf(tag))), tag)
+        }
+        assertEquals(null, AdBreakDetector.parseDate("+999999999-12-31T23:59:59Z"))
+    }
+
+    @Test
     fun malformedDatesNeverCrashAndNeverMatch() {
         val tag = range("""ID="stitched-ad-1",START-DATE="not a date",DURATION=30""")
         assertFalse(AdBreakDetector.isAdAtEdge(view(tags = listOf(tag))))
@@ -204,10 +215,12 @@ class AdBreakPlannerTest {
     fun hardCapForcesExitAndIgnoresAStuckMarkerUntilTheEdgeIsClean() {
         planner.onObservation(0, true, 0)
         assertEquals(AdBreakPlanner.Action.Enter, planner.poll(0))
-        planner.onObservation(100_000, true, 0)
+        for (t in 10_000..170_000 step 10_000) planner.onObservation(t.toLong(), true, 0) // the marker keeps showing
+        planner.onObservation(175_000, true, 0)
         assertEquals(AdBreakPlanner.Action.None, planner.poll(179_999))
         assertEquals(AdBreakPlanner.Action.Exit, planner.poll(180_000))
         assertFalse(planner.isActive)
+        assertTrue(planner.isLockedOut)
 
         // The marker is still there: it must not re-trigger a hide.
         planner.onObservation(181_000, true, 0)
@@ -216,6 +229,7 @@ class AdBreakPlannerTest {
 
         // Once the edge has been seen clean, the next real ad works again.
         planner.onObservation(190_000, false, 0)
+        assertFalse(planner.isLockedOut)
         planner.onObservation(200_000, true, 0)
         assertEquals(AdBreakPlanner.Action.Enter, planner.poll(200_000))
     }
@@ -238,6 +252,54 @@ class AdBreakPlannerTest {
         assertEquals(AdBreakPlanner.Action.None, planner.poll(10_000))
         planner.onObservation(11_000, true, 1_000)
         assertEquals(AdBreakPlanner.Action.Enter, planner.poll(11_500))
+    }
+
+    @Test
+    fun theScheduleFollowsTheCurrentLagWhenTheViewerSeeksToLiveWhileTheAdIsPending() {
+        planner.onObservation(0, true, 10_000) // would arrive at 9_500
+        planner.onObservation(2_000, true, 3_000) // the viewer jumped to live: arrival is 0 + 3_000 - 500
+        assertEquals(AdBreakPlanner.Action.None, planner.poll(2_400))
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(2_500))
+    }
+
+    @Test
+    fun theScheduleMovesOutWhenThePlayerFallsFurtherBehindWhilePaused() {
+        planner.onObservation(0, true, 2_000) // would arrive at 1_500
+        planner.onObservation(1_000, true, 12_000) // paused: the lag has grown
+        assertEquals(AdBreakPlanner.Action.None, planner.poll(1_500))
+        assertEquals(AdBreakPlanner.Action.None, planner.poll(11_400))
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(11_500))
+    }
+
+    @Test
+    fun theExitFollowsTheCurrentLagToo() {
+        planner.onObservation(0, true, 1_000)
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(500))
+        planner.onObservation(10_000, false, 8_000) // first clean look, lag 8 s: exit at 18_000
+        planner.onObservation(12_000, false, 2_000) // the viewer caught up to live: exit at 10_000 + 2_000
+        assertEquals(AdBreakPlanner.Action.Exit, planner.poll(12_000))
+    }
+
+    @Test
+    fun implausibleLagValuesAreTreatedAsUnknown() {
+        planner.onObservation(0, true, -3_000)
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(0)) // unknown lag: hide at once
+        planner.onObservation(10_000, false, 300_000)
+        assertEquals(AdBreakPlanner.Action.None, planner.poll(10_000 + AdBreakPlanner.UNKNOWN_LAG_EXIT_MS - 1))
+        assertEquals(AdBreakPlanner.Action.Exit, planner.poll(10_000 + AdBreakPlanner.UNKNOWN_LAG_EXIT_MS))
+    }
+
+    @Test
+    fun aBreakEndsWhenNoObservationArrivesForTooLongAndRestartsWhenTheyDo() {
+        planner.onObservation(0, true, 0)
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(0))
+        assertEquals(AdBreakPlanner.Action.None, planner.poll(AdBreakPlanner.STALE_OBSERVATION_MS - 1))
+        assertEquals(AdBreakPlanner.Action.Exit, planner.poll(AdBreakPlanner.STALE_OBSERVATION_MS))
+        assertFalse(planner.isActive)
+        assertFalse(planner.isLockedOut)
+
+        planner.onObservation(40_000, true, 0) // the playlist is readable again and the ad is still there
+        assertEquals(AdBreakPlanner.Action.Enter, planner.poll(40_000))
     }
 
     @Test
@@ -346,5 +408,24 @@ class MediaPlaylistFetcherTest {
         }
         // The server is gone now: a connection failure is also just "no answer".
         assertEquals(null, MediaPlaylistFetcher.view(testHttp(), "http://127.0.0.1:1/v.m3u8"))
+    }
+
+    @Test
+    fun aStalledPlaylistFetchGivesUpAtTheTimeoutInsteadOfHangingTheDetector() = runTest {
+        val slow = MockWebServer().also { it.start() }
+        try {
+            slow.enqueue(
+                mockwebserver3.MockResponse.Builder()
+                    .body("#EXTM3U\n#EXTINF:2.000,live\nhttps://e/1.ts\n")
+                    .headersDelay(3, java.util.concurrent.TimeUnit.SECONDS)
+                    .build(),
+            )
+            val started = System.nanoTime()
+            assertEquals(null, MediaPlaylistFetcher.view(testHttp(), slow.url("/v.m3u8").toString(), timeoutMs = 300))
+            val tookMs = (System.nanoTime() - started) / 1_000_000
+            assertTrue(tookMs < 2_000, "took ${tookMs}ms")
+        } finally {
+            slow.close()
+        }
     }
 }

@@ -48,6 +48,26 @@ class ProxyUrlsTest {
     }
 
     @Test
+    fun aQueryStringContainingASchemeDoesNotConfuseTheSchemeDetection() {
+        val template = "proxy.example/live/\$channel?upstream=https://usher.ttvnw.net/x"
+        assertTrue(ProxyUrls.isUsable(template))
+        assertEquals("https://proxy.example/live/alice?upstream=https://usher.ttvnw.net/x", ProxyUrls.expand(template, "alice").toString())
+    }
+
+    @Test
+    fun aTemplateThatResolvesToTheSameAddressForEveryChannelIsRejected() {
+        assertFalse(ProxyUrls.isUsable("x.example/live/\$channel/../../admin"))
+        assertFalse(ProxyUrls.isUsable("x.example/\$channel/.."))
+        assertTrue(ProxyUrls.isUsable("x.example/live/\$channel/index"))
+    }
+
+    @Test
+    fun twoPastedAddressesOnOneLineAreNotOneUsableTemplate() {
+        // the whole-field check in the settings screen runs parseList first; as a single template this has a space
+        assertFalse(ProxyUrls.isUsable("a.example/live/\$channel b.example/live/\$channel"))
+    }
+
+    @Test
     fun pingUrlReplacesPathAndQuery() {
         assertEquals(
             "https://eu.luminous.dev/ping",
@@ -78,6 +98,47 @@ class ProxyUrlsTest {
     }
 }
 
+class HttpProxyValidityTest {
+    @Test
+    fun onlyABareHostAndARealPortAreValid() {
+        assertTrue(HttpProxy("proxy.example", 8080).isValid)
+        assertTrue(HttpProxy("10.0.0.5", 3128).isValid)
+        assertFalse(HttpProxy("http://proxy.example", 8080).isValid)
+        assertFalse(HttpProxy("proxy.example/path", 8080).isValid)
+        assertFalse(HttpProxy("proxy example", 8080).isValid)
+        assertFalse(HttpProxy("", 8080).isValid)
+        assertFalse(HttpProxy("proxy.example", 0).isValid)
+        assertFalse(HttpProxy("proxy.example", 65536).isValid)
+    }
+}
+
+class SourceCooldownTest {
+    private var now = 0L
+    private val cooldown = SourceCooldown<String>(windowMs = 1_000, nowMs = { now })
+
+    @Test
+    fun aFailedSourceIsSkippedForTheWindowAndThenAvailableAgain() {
+        cooldown.failed("a")
+        assertTrue(cooldown.isCoolingDown("a"))
+        assertFalse(cooldown.isCoolingDown("b"))
+        now = 999
+        assertEquals(listOf("b", "c"), cooldown.available(listOf("a", "b", "c")) { it })
+        now = 1_000
+        assertEquals(listOf("a", "b", "c"), cooldown.available(listOf("a", "b", "c")) { it })
+    }
+
+    @Test
+    fun failingAgainRestartsTheWindowAndClearForgetsEverything() {
+        cooldown.failed("a")
+        now = 900
+        cooldown.failed("a")
+        now = 1_500
+        assertTrue(cooldown.isCoolingDown("a"))
+        cooldown.clear()
+        assertFalse(cooldown.isCoolingDown("a"))
+    }
+}
+
 class ProxyEntryCodecTest {
     @Test
     fun defaultsSurviveAnEncodeDecodeRoundTripWithTheirEnabledFlags() {
@@ -93,6 +154,12 @@ class ProxyEntryCodecTest {
             listOf(ProxyEntry("a.example/live/\$channel", false), ProxyEntry("b.example/live/\$channel", true)),
             ProxyEntryCodec.decode(raw),
         )
+    }
+
+    @Test
+    fun theSameSwapIdentityOnTwoLinesKeepsOnlyTheFirstWhateverItsState() {
+        assertEquals(listOf(VideoSwapEntry("web", "embed", true)), ProxyEntryCodec.decodeSwap("web/embed\n#web/embed"))
+        assertEquals(listOf(VideoSwapEntry("web", "embed", false)), ProxyEntryCodec.decodeSwap("#web/embed\nweb/embed"))
     }
 
     @Test

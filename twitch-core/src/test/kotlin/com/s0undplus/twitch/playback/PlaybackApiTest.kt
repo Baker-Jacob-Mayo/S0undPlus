@@ -271,4 +271,48 @@ class PlaybackApiTest {
         val tookMs = (System.nanoTime() - started) / 1_000_000
         assertTrue(tookMs < 2_000, "gave up after ${tookMs}ms instead of the 300ms limit")
     }
+
+    @Test
+    fun theAndroidIdentityAsksForItsTokenWithTheAndroidClientIdAndTheWebOneWithTheWebId() = runTest {
+        repeat(2) { server.enqueue(json(tokenResponse)); server.enqueue(text(master)) }
+        api.live("alice", PlaybackOptions(platform = PlayerTypes.ANDROID, playerType = PlayerTypes.AUTOPLAY))
+        api.live("alice")
+        val android = server.takeRequest().also { server.takeRequest() }
+        val web = server.takeRequest()
+        assertEquals("ue6666qo983tsx6so1t0vnawi233wa", android.headers["Client-ID"])
+        assertEquals("kimne78kx3ncx6brgo4mv6wki5h1ko", web.headers["Client-ID"])
+    }
+
+    @Test
+    fun aFreshDeviceIdIsSentOnlyWhenAskedFor() = runTest {
+        repeat(3) { server.enqueue(json(tokenResponse)); server.enqueue(text(master)) }
+        api.live("alice")
+        api.live("alice", PlaybackOptions(freshDeviceId = true))
+        api.live("alice", PlaybackOptions(freshDeviceId = true))
+        val ids = mutableListOf<String?>()
+        repeat(3) { ids += server.takeRequest().headers["X-Device-Id"]; server.takeRequest() }
+        assertEquals("device-1", ids[0])
+        assertTrue(ids[1]!!.matches(Regex("[0-9a-f]{32}")), "${ids[1]}")
+        assertTrue(ids[2]!!.matches(Regex("[0-9a-f]{32}")), "${ids[2]}")
+        assertTrue(ids[1] != ids[2] && ids[1] != "device-1")
+    }
+
+    @Test
+    fun relativeRungUrlsAreResolvedAgainstTheAddressThePlaylistWasActuallyServedFrom() = runTest {
+        server.enqueue(
+            MockResponse.Builder().code(302).addHeader("Location", server.url("/real/place/master.m3u8").toString()).build(),
+        )
+        server.enqueue(
+            text(
+                """
+                #EXTM3U
+                #EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=1280x720
+                720p.m3u8
+                """.trimIndent(),
+            ),
+        )
+        val template = server.url("/p/\$channel").toString()
+        val stream = api.live("alice", PlaybackOptions(route = PlaybackRoute.CustomUrl(template)))
+        assertEquals(server.url("/real/place/720p.m3u8").toString(), stream.variants.single().url)
+    }
 }

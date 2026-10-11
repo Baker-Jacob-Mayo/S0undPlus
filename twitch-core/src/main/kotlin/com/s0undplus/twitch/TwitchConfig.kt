@@ -16,6 +16,12 @@ data class TwitchConfig(
     val gqlUrl: String = "https://gql.twitch.tv/gql",
     val usherUrl: String = "https://usher.ttvnw.net",
     val webClientId: String = "kimne78kx3ncx6brgo4mv6wki5h1ko",
+    /**
+     * Client ID paired with `platform=android` token requests (the video-swap identity). It is the ID Xtra effectively
+     * uses by default for every token request; whether Twitch treats it differently from the web one is not something
+     * that can be checked offline.
+     */
+    val androidClientId: String = "ue6666qo983tsx6so1t0vnawi233wa",
     val ircUrl: String = "wss://irc-ws.chat.twitch.tv:443",
     val eventSubUrl: String = "wss://eventsub.wss.twitch.tv/ws",
     val recentMessagesUrl: String = "https://recent-messages.robotty.de/api/v2/recent-messages",
