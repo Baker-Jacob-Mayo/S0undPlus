@@ -47,7 +47,8 @@ internal suspend fun Call.await(maxBodyBytes: Long = MAX_AWAITED_BODY_BYTES): Re
             override fun onResponse(call: Call, response: Response) {
                 val buffered = try {
                     response.withBodyInMemory(maxBodyBytes)
-                } catch (e: IOException) {
+                } catch (e: Exception) {
+                    // Not only IOException: anything thrown here would otherwise leave the caller suspended for ever.
                     response.close()
                     if (!cont.isCancelled) cont.resumeWithException(e)
                     return
