@@ -8,9 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.ViewModel
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,13 +61,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/**
+ * A category's list, scroll position and focused card. Kept in an Activity-scoped ViewModel (like Home's) so that
+ * coming back from a stream finds the page as it was, focus on the card that was opened, instead of reloading it.
+ */
+class CategoryViewModel(c: AppContainer, id: String) : ViewModel() {
+    val loader = PagedLoader<Stream>(viewModelScope, { it.userId }) { c.helix.streams(gameId = id, after = it) }
+    val gridState = LazyGridState()
+    var focusedKey: Any? = null
+}
+
 /** Top streams in one category. */
 @Composable
 fun CategoryScreen(id: String, name: String, onOpenStream: (Stream) -> Unit) {
     val container = LocalAppContainer.current
-    val scope = rememberScreenScope()
-    val loader = remember(id) { PagedLoader<Stream>(scope, { it.userId }) { container.helix.streams(gameId = id, after = it) } }
-    val gridState = rememberLazyGridState()
+    val vm = viewModel(key = "category-$id") { CategoryViewModel(container, id) }
 
     Column(Modifier.fillMaxSize()) {
         Text(
@@ -71,11 +85,13 @@ fun CategoryScreen(id: String, name: String, onOpenStream: (Stream) -> Unit) {
             modifier = Modifier.padding(horizontal = 48.dp, vertical = 24.dp),
         )
         PagedGrid(
-            loader = loader,
-            gridState = gridState,
+            loader = vm.loader,
+            gridState = vm.gridState,
             emptyText = "Nobody is streaming $name right now.",
             itemKey = { it.userId },
             modifier = Modifier.weight(1f),
+            restoreFocusKey = vm.focusedKey,
+            onItemFocused = { vm.focusedKey = it },
         ) { stream, modifier -> StreamCard(stream, { onOpenStream(stream) }, modifier) }
     }
 }
@@ -92,6 +108,7 @@ class ChannelController(private val c: AppContainer, private val login: String, 
     val state: StateFlow<ChannelState> = _state.asStateFlow()
 
     private var userId: String? = null
+    private var loadedAtMs = 0L
 
     /** One list per kind of saved video, each loaded the first time its tab is shown. */
     val videos: Map<VideoType, PagedLoader<Video>> = VideoType.entries.associateWith { type ->
@@ -112,6 +129,7 @@ class ChannelController(private val c: AppContainer, private val login: String, 
                 userId = user.id
                 val stream = c.helix.streamByLogin(login)
                 _state.value = ChannelState.Loaded(user, stream)
+                loadedAtMs = System.currentTimeMillis()
                 videos.getValue(VideoType.ARCHIVE).refresh()
             } catch (e: CancellationException) {
                 throw e
@@ -120,18 +138,62 @@ class ChannelController(private val c: AppContainer, private val login: String, 
             }
         }
     }
+
+    /** Re-checks whether the channel is live when the page was loaded a while ago, without blanking the page. */
+    fun refreshIfStale() {
+        val loaded = _state.value as? ChannelState.Loaded ?: return
+        if (System.currentTimeMillis() - loadedAtMs < STALE_MS) return
+        loadedAtMs = System.currentTimeMillis()
+        scope.launch {
+            try {
+                _state.value = loaded.copy(stream = c.helix.streamByLogin(login))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // keep what is shown
+            }
+        }
+    }
+
+    private companion object {
+        const val STALE_MS = 60_000L
+    }
+}
+
+/**
+ * One channel's page state: its data, the chosen kind of video, scroll positions and the focused card. Activity-scoped
+ * (like Home's), so coming back from a video finds the page as it was, focus on the video that was played.
+ */
+class ChannelViewModel(c: AppContainer, login: String) : ViewModel() {
+    val controller = ChannelController(c, login, viewModelScope).also { it.load() }
+    var videoType by mutableStateOf(VideoType.ARCHIVE)
+    val gridStates: Map<VideoType, LazyGridState> = VideoType.entries.associateWith { LazyGridState() }
+    val focusedKeys = mutableMapOf<VideoType, Any>()
 }
 
 @Composable
 fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
     val container = LocalAppContainer.current
     val scope = rememberScreenScope()
-    val controller = remember(login) { ChannelController(container, login, scope).also { it.load() } }
+    val vm = viewModel(key = "channel-${login.lowercase()}") { ChannelViewModel(container, login) }
+    val controller = vm.controller
     val state by controller.state.collectAsStateWithLifecycle()
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
-    val gridStates = VideoType.entries.associateWith { rememberLazyGridState() }
-    var videoType by remember { mutableStateOf(VideoType.ARCHIVE) }
+    val videoType = vm.videoType
     var showFollowQr by remember { mutableStateOf(false) }
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { controller.refreshIfStale() }
+    // A fresh visit starts on "Watch live" (or the video tabs when offline); coming back, the grid restores the card.
+    val loaded = state is ChannelState.Loaded
+    LaunchedEffect(loaded) {
+        if (loaded && vm.focusedKeys[vm.videoType] == null) {
+            try {
+                firstFocus.requestFocus()
+            } catch (_: IllegalStateException) {
+                // not attached yet; the first D-pad press still lands on the page
+            }
+        }
+    }
 
     when (val s = state) {
         ChannelState.Loading -> LoadingState()
@@ -150,6 +212,7 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                         scope.launch { container.settings.toggleFavorite(FavoriteChannel(s.user.login, s.user.displayName, s.user.id)) }
                     },
                     onFollowQr = { showFollowQr = true },
+                    watchFocus = firstFocus,
                 )
                 Row(
                     Modifier.padding(horizontal = 48.dp, vertical = 8.dp),
@@ -157,15 +220,23 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     for (type in VideoType.entries) {
-                        PillButton(type.label, { videoType = type }, selected = videoType == type)
+                        PillButton(
+                            type.label,
+                            { vm.videoType = type },
+                            // Offline channels start here (there is no "Watch live" to start on).
+                            modifier = if (s.stream == null && type == videoType) Modifier.focusRequester(firstFocus) else Modifier,
+                            selected = videoType == type,
+                        )
                     }
                 }
                 PagedGrid(
                     loader = controller.videos.getValue(videoType),
-                    gridState = gridStates.getValue(videoType),
+                    gridState = vm.gridStates.getValue(videoType),
                     emptyText = "${s.user.displayName} has no ${videoType.label.lowercase()}.",
                     itemKey = { it.id },
                     modifier = Modifier.weight(1f),
+                    restoreFocusKey = vm.focusedKeys[videoType],
+                    onItemFocused = { vm.focusedKeys[videoType] = it },
                 ) { video, modifier ->
                     val settings = container.settings
                     val resume by produceState(0L, video.id) { value = settings.vodPosition(video.id) / 1000 }
@@ -198,6 +269,7 @@ private fun ChannelHeader(
     onWatch: () -> Unit,
     onFavorite: () -> Unit,
     onFollowQr: () -> Unit,
+    watchFocus: FocusRequester,
 ) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 24.dp),
@@ -233,7 +305,7 @@ private fun ChannelHeader(
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (stream != null) PillButton("Watch live", onWatch)
+                if (stream != null) PillButton("Watch live", onWatch, Modifier.focusRequester(watchFocus))
                 PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
             }
             PillButton("Follow on Twitch (QR)", onFollowQr)

@@ -206,11 +206,17 @@ fun PlayerScreen(
     // The TV's refresh rate follows the stream's frame rate (once per stream), and goes back to normal on leaving.
     val activity = LocalActivity.current
     val frameRate = remember(activity) { activity?.let(::FrameRateSwitcher) }
-    val streamFps = ready?.variants?.filterNot { it.isAudioOnly }?.maxOfOrNull { it.frameRate }?.toFloat() ?: 0f
-    LaunchedEffect(frameRate, ready?.masterUrl, streamFps, settings.matchFrameRate, audioOnly) {
+    // The rate of the quality that will actually play: the one picked, or for Auto the source (what adaptive playback
+    // settles on with a good connection). Renditions can differ: a 1080p50 source often comes with a 720p60 copy.
+    val playedUrl = ready?.let { resolve(it, qualityChoice, audioOnly, settings.quality).second }
+    val streamFps = ready?.let { stream ->
+        val video = stream.variants.filterNot { it.isAudioOnly }
+        (video.firstOrNull { it.url == playedUrl } ?: video.maxByOrNull { it.bandwidth })?.frameRate?.toFloat()
+    } ?: 0f
+    LaunchedEffect(frameRate, playedUrl, streamFps, settings.matchFrameRate, audioOnly) {
         val switcher = frameRate ?: return@LaunchedEffect
-        if (settings.matchFrameRate && !audioOnly && ready != null) {
-            switcher.apply(ready.masterUrl, streamFps)
+        if (settings.matchFrameRate && !audioOnly && ready != null && playedUrl != null) {
+            switcher.apply(playedUrl, streamFps)
         } else {
             switcher.reset()
         }

@@ -1,6 +1,37 @@
 package com.s0undplus.tv.ui.player
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Forward30
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QrCode2
+import androidx.compose.material.icons.rounded.Replay30
+import androidx.compose.material.icons.rounded.SpeakerNotesOff
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material.icons.rounded.ViewCarousel
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.tv.material3.Icon
+import com.s0undplus.tv.ui.components.FocusSurface
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.s0undplus.tv.ui.components.ClockText
-import com.s0undplus.tv.ui.components.PillButton
 import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.util.Format
@@ -74,8 +104,8 @@ internal fun ControlsOverlay(
                     0f to Color(0xC0000000),
                     0.28f to Color(0x40000000),
                     0.5f to Color(0x30000000),
-                    0.68f to Color(0x80000000),
-                    1f to Color(0xF0000000),
+                    0.62f to Color(0x80000000),
+                    1f to Color(0xF2000000),
                 ),
             ),
     ) {
@@ -100,8 +130,9 @@ internal fun ControlsOverlay(
                 }
                 if (isLive && info != null) {
                     val uptime = Format.uptime(info.startedAt)
+                    val behind = latencyMs?.let { " · ${(it + 500) / 1000} s behind live" }.orEmpty()
                     Text(
-                        "${Format.count(info.viewerCount)} viewers" + (uptime?.let { " · live for $it" }.orEmpty()),
+                        "${Format.count(info.viewerCount)} viewers" + (uptime?.let { " · live for $it" }.orEmpty()) + behind,
                         style = MaterialTheme.typography.bodySmall,
                         color = Palette.Muted,
                     )
@@ -114,38 +145,93 @@ internal fun ControlsOverlay(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(horizontal = 48.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             if (!isLive) SeekBar(positionMs, durationMs)
-            // What you reach for while watching, on the row the remote lands on.
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!isLive) PillButton("−30s", { onSeek(-30_000) }, Modifier.focusRequester(firstControl))
-                PillButton(
+            // One row of symbols in three groups (playback, viewing, channel). The focused one shows its name below it,
+            // and toggles that are on stay tinted, so the state is readable at a glance.
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!isLive) ControlButton(Icons.Rounded.Replay30, "Back 30 s", { onSeek(-30_000) }, Modifier.focusRequester(firstControl))
+                ControlButton(
+                    if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     if (playing) "Pause" else "Play",
                     onPlayPause,
                     if (isLive) Modifier.focusRequester(firstControl) else Modifier,
+                    large = true,
                 )
-                if (!isLive) PillButton("+30s", { onSeek(30_000) })
+                if (!isLive) ControlButton(Icons.Rounded.Forward30, "Forward 30 s", { onSeek(30_000) })
                 if (isLive) {
                     // Only worth offering when the viewer has fallen noticeably behind (after a pause, say).
                     val behind = latencyMs?.takeIf { it > JUMP_TO_LIVE_AFTER_MS }
-                    if (behind != null) PillButton("Go live (${behind / 1000} s behind)", onJumpToLive)
+                    if (behind != null) ControlButton(Icons.Rounded.LiveTv, "Go live · ${behind / 1000} s behind", onJumpToLive, active = true)
                 }
-                PillButton("Quality: $qualityLabel", onQuality)
-                PillButton(if (chatOn) "Chat: On" else "Chat: Off", onChat)
-                if (isLive) PillButton("Other channels", onPeek)
-            }
-            // Everything else, one row down.
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                PillButton(if (isFavorite) "★ Favorite" else "☆ Favorite", onFavorite, selected = isFavorite)
-                PillButton("Channel page", onChannel)
-                PillButton(if (audioOnly) "Audio only: On" else "Audio only", onAudioOnly, selected = audioOnly)
-                PillButton(if (zoom) "Video: fill" else "Video: fit", onZoom)
-                if (pipSupported) PillButton("Picture-in-picture", onPip)
-                PillButton("Chat on phone", onChatOnPhone)
+                GroupGap()
+                ControlButton(Icons.Rounded.HighQuality, "Quality · $qualityLabel", onQuality)
+                ControlButton(
+                    if (chatOn) Icons.AutoMirrored.Rounded.Chat else Icons.Rounded.SpeakerNotesOff,
+                    if (chatOn) "Chat · on" else "Chat · off",
+                    onChat,
+                    active = chatOn,
+                )
+                if (isLive) ControlButton(Icons.Rounded.ViewCarousel, "Other channels", onPeek)
+                ControlButton(Icons.Rounded.Headphones, if (audioOnly) "Audio only · on" else "Audio only · off", onAudioOnly, active = audioOnly)
+                ControlButton(Icons.Rounded.AspectRatio, if (zoom) "Picture · fill screen" else "Picture · fit", onZoom, active = zoom)
+                if (pipSupported) ControlButton(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", onPip)
+                GroupGap()
+                ControlButton(
+                    if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                    if (isFavorite) "Favorite · on" else "Add to favorites",
+                    onFavorite,
+                    active = isFavorite,
+                )
+                ControlButton(Icons.Rounded.AccountCircle, "Channel page", onChannel)
+                ControlButton(Icons.Rounded.QrCode2, "Chat on your phone", onChatOnPhone)
             }
         }
+    }
+}
+
+@Composable
+private fun GroupGap() = Spacer(Modifier.width(14.dp))
+
+/** A round symbol button whose name appears underneath while it has focus. */
+@Composable
+private fun ControlButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    large: Boolean = false,
+    active: Boolean = false,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val size = if (large) 72.dp else 56.dp
+    // Fixed width: the label may be wider than the button and simply overhangs, so the row never shifts as focus moves.
+    Column(Modifier.width(size), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        FocusSurface(
+            onClick = onClick,
+            modifier = modifier.size(size).onFocusChanged { focused = it.isFocused },
+            shape = CircleShape,
+            container = if (active) Palette.Brand.copy(alpha = 0.55f) else Color(0xCC1C1C22), // dark glass: readable over any picture
+            focusedContainer = Palette.Brand,
+            focusedScale = 1.12f,
+        ) {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = Color.White,
+                modifier = Modifier.align(Alignment.Center).size(if (large) 40.dp else 28.dp),
+            )
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.wrapContentWidth(unbounded = true).alpha(if (focused) 1f else 0f),
+        )
     }
 }
 
