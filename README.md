@@ -30,9 +30,10 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | **Remembers your place** | Going back from a stream returns to the same tab, scroll position and focused card. |
 | **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
 | **Channel pages & VODs** | Profile, live status, past broadcasts, highlights and uploads, with **resume where you left off**, plus a **History** tab of what you watched. |
-| **Player** | Media3 HLS on the app's shared OkHttp client, quality picker with a remembered preference, audio-only mode, live-edge recovery, **viewer count and uptime**, **seconds behind live with a Jump to live button**, Fit/Fill for 4:3 streams, VOD seeking, touch/swipe gestures (volume, chat, seek). |
+| **Player** | Media3 HLS on the app's shared OkHttp client, quality picker (best first, source marked) with a remembered preference, audio-only mode, live-edge recovery, **viewer count and uptime**, **seconds behind live with a Jump to live button**, Fit/Fill for 4:3 streams, VOD seeking, touch/swipe gestures (volume, chat, seek). Controls are one row of symbols; the focused one's name shows beneath it. |
+| **Frame-rate matching** | On by default: the TV switches to a refresh rate that fits the stream (50 Hz for a 50 fps stream, which judders on 60 Hz), once per stream, and back when you leave. Works even when the TV's own "Match content frame rate" is set to Seamless only, which on most boxes never switches. |
 | **Auto-refresh** | If a stream ends or stalls, the app checks the streamer is still online, then re-requests a fresh playback token and reconnects (normal or aggressive mode, configurable retries and interval). |
-| **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). |
+| **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). Peek and Channel +/− use your followed live channels; Settings → Playback can add popular ones after them. |
 | **Raid redirect** | When the channel you're watching raids another one, you're taken along after a 10 s countdown (Back to stay). Uses Twitch's official EventSub. |
 | **Picture-in-picture** | Press Home while watching and the stream shrinks into a PiP window (Android 8+, device permitting). |
 | **Chat** | Overlay or beside the video; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling, highlighted `@you` mentions, cheer amounts and reply context. **VOD chat replay** in sync with the video. |
@@ -58,17 +59,20 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 
 | Where | Key | Action |
 |---|---|---|
-| Player (overlay hidden) | OK / Up | Show controls |
-| Player, live | Down | Peek at other live channels |
+| Player (overlay hidden) | OK / Up / Down | Show controls |
 | Player, live | Right / Left | Show / hide chat |
 | Player, VOD | Left / Right | Seek −10 s / +10 s |
 | Player | Play/Pause, Rewind, Fast-forward | As labelled (rewind/FF seek ±30 s on VODs) |
 | Player | Red / Green / Yellow / Blue | Chat / quality / audio-only / peek |
-| Player | Channel +/− | Next / previous followed live channel |
+| Player | Channel +/− | Next / previous live channel (followed only unless Settings adds popular ones) |
 | Player | Info or Menu | Show controls |
-| Player | Back | Close menu → hide controls → leave the stream |
+| Player | Back | Close menu → hide controls → leave the stream (one press each) |
 | Home | long-press OK on a card | Open the channel page (or remove from History) |
 | Anywhere | Back | Previous screen |
+
+The player's controls, left to right: play/pause (with Back 30 s / Forward 30 s on videos, and Go live when you're behind);
+quality, chat, other channels, audio only, fit/fill, picture-in-picture; then favorite, channel page and chat on your
+phone. Blue (or the other-channels button) opens the peek view.
 
 ## Setup
 
