@@ -55,11 +55,11 @@ object FakeStreams {
             FakeTwitch.text(master(if (platform == "android") "alt" else "live"), contentType = MPEGURL)
         }
         FakeTwitch.on("/hls/live/media.m3u8") { request ->
-            playlistRequests += "live ${who(request.headers["User-Agent"])}"
+            playlistRequests += "live ${who(request.headers["Accept-Encoding"])}"
             FakeTwitch.text(mediaPlaylist("live"), contentType = MPEGURL)
         }
         FakeTwitch.on("/hls/alt/media.m3u8") { request ->
-            playlistRequests += "alt ${who(request.headers["User-Agent"])}"
+            playlistRequests += "alt ${who(request.headers["Accept-Encoding"])}"
             FakeTwitch.text(mediaPlaylist("alt"), contentType = MPEGURL)
         }
         FakeTwitch.on("/hls/seg/") { request ->
@@ -71,7 +71,8 @@ object FakeStreams {
         }
     }
 
-    private fun who(userAgent: String?): String = if (userAgent?.contains("ExoPlayer", ignoreCase = true) == true) "exoplayer" else "okhttp"
+    /** ExoPlayer's data source asks for `identity` encoding; the app's own OkHttp calls leave the default (gzip). */
+    private fun who(acceptEncoding: String?): String = if (acceptEncoding == "identity") "exoplayer" else "app-okhttp"
 
     /** The newest segment the playlist offers right now. */
     fun latestSeq(): Int = 3 + ((System.currentTimeMillis() - startMs) / SEGMENT_MS).toInt()

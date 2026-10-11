@@ -126,6 +126,7 @@ class AdBlocker(
      */
     suspend fun run(watchUrl: () -> String?, swap: Boolean) {
         coroutineScope {
+            Log.i(TAG, "watching for ad breaks (swap to an ad-free copy: $swap)")
             planner.reset()
             scope = this
             swapEnabled = swap

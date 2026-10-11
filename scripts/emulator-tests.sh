@@ -6,6 +6,7 @@
 set -u
 mkdir -p emulator-results
 adb logcat -c || true
+adb logcat -G 16M || true # the default ring buffer forgets the early tests before the run is over
 {
   echo "device: $(adb shell getprop ro.product.model | tr -d '\r') / API $(adb shell getprop ro.build.version.sdk | tr -d '\r') / $(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
   echo "leanback: $(adb shell pm has-feature android.software.leanback | tr -d '\r')"
