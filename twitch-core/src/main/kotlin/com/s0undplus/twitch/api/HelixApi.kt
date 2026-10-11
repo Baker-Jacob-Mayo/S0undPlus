@@ -13,6 +13,7 @@ import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
+import com.s0undplus.twitch.VideoType
 import com.s0undplus.twitch.auth.AuthSession
 import com.s0undplus.twitch.await
 import com.s0undplus.twitch.chat.BadgeDirectory
@@ -104,13 +105,18 @@ class HelixApi(
             pageOf("users", User.serializer(), chunk.map { "id" to it }).items
         }
 
-    /** Past broadcasts (VODs) of a channel, newest first. */
-    suspend fun videos(userId: String, after: String? = null, first: Int = 20): Page<Video> =
+    /** Saved videos of a channel, newest first: past broadcasts (VODs) unless another [type] is asked for. */
+    suspend fun videos(
+        userId: String,
+        after: String? = null,
+        first: Int = 20,
+        type: VideoType = VideoType.ARCHIVE,
+    ): Page<Video> =
         page(
             "videos",
             Video.serializer(),
             "user_id" to userId,
-            "type" to "archive",
+            "type" to type.apiValue,
             "first" to first,
             "after" to after,
         )

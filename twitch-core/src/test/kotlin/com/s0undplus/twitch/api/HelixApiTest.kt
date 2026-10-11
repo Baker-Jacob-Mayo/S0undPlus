@@ -147,6 +147,15 @@ class HelixApiTest {
     }
 
     @Test
+    fun videosCanBeListedAsHighlightsOrUploads() = runTest {
+        repeat(2) { server.enqueue(json("""{"data":[],"pagination":{}}""")) }
+        helix.videos("10", type = com.s0undplus.twitch.VideoType.HIGHLIGHT)
+        helix.videos("10", type = com.s0undplus.twitch.VideoType.UPLOAD)
+        assertEquals("highlight", server.takeRequest().url.queryParameter("type"))
+        assertEquals("upload", server.takeRequest().url.queryParameter("type"))
+    }
+
+    @Test
     fun videoByIdReturnsTheVideoOrNullWhenMissing() = runTest {
         server.enqueue(
             json(

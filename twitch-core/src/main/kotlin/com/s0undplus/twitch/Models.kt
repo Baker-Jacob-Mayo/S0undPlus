@@ -75,6 +75,13 @@ data class User(
     @SerialName("broadcaster_type") val broadcasterType: String = "",
 )
 
+/** The kinds of saved video Helix can list for a channel. */
+enum class VideoType(val apiValue: String, val label: String) {
+    ARCHIVE("archive", "Past broadcasts"),
+    HIGHLIGHT("highlight", "Highlights"),
+    UPLOAD("upload", "Uploads"),
+}
+
 @Serializable
 data class Video(
     val id: String,

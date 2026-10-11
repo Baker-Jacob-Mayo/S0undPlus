@@ -46,6 +46,7 @@ import com.s0undplus.tv.ui.util.rememberScreenScope
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
+import com.s0undplus.twitch.VideoType
 import com.s0undplus.twitch.library.FavoriteChannel
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -92,8 +93,11 @@ class ChannelController(private val c: AppContainer, private val login: String, 
 
     private var userId: String? = null
 
-    val videos = PagedLoader<Video>(scope, { it.id }) { cursor ->
-        c.helix.videos(userId ?: error("channel not loaded"), after = cursor)
+    /** One list per kind of saved video, each loaded the first time its tab is shown. */
+    val videos: Map<VideoType, PagedLoader<Video>> = VideoType.entries.associateWith { type ->
+        PagedLoader<Video>(scope, { it.id }) { cursor ->
+            c.helix.videos(userId ?: error("channel not loaded"), after = cursor, type = type)
+        }
     }
 
     fun load() {
@@ -108,7 +112,7 @@ class ChannelController(private val c: AppContainer, private val login: String, 
                 userId = user.id
                 val stream = c.helix.streamByLogin(login)
                 _state.value = ChannelState.Loaded(user, stream)
-                videos.refresh()
+                videos.getValue(VideoType.ARCHIVE).refresh()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -125,7 +129,8 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
     val controller = remember(login) { ChannelController(container, login, scope).also { it.load() } }
     val state by controller.state.collectAsStateWithLifecycle()
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
-    val gridState = rememberLazyGridState()
+    val gridStates = VideoType.entries.associateWith { rememberLazyGridState() }
+    var videoType by remember { mutableStateOf(VideoType.ARCHIVE) }
     var showFollowQr by remember { mutableStateOf(false) }
 
     when (val s = state) {
@@ -146,16 +151,19 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                     },
                     onFollowQr = { showFollowQr = true },
                 )
-                Text(
-                    "Past broadcasts",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Palette.OnBackground,
-                    modifier = Modifier.padding(horizontal = 48.dp, vertical = 8.dp),
-                )
+                Row(
+                    Modifier.padding(horizontal = 48.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    for (type in VideoType.entries) {
+                        PillButton(type.label, { videoType = type }, selected = videoType == type)
+                    }
+                }
                 PagedGrid(
-                    loader = controller.videos,
-                    gridState = gridState,
-                    emptyText = "${s.user.displayName} has no saved broadcasts.",
+                    loader = controller.videos.getValue(videoType),
+                    gridState = gridStates.getValue(videoType),
+                    emptyText = "${s.user.displayName} has no ${videoType.label.lowercase()}.",
                     itemKey = { it.id },
                     modifier = Modifier.weight(1f),
                 ) { video, modifier ->
