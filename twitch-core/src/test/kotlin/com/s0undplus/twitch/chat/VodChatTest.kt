@@ -88,6 +88,8 @@ class VodChatTest {
         api.page("123", cursor = "C3")
         val second = server.takeRequest()
         assertEquals("device-1", second.headers["X-Device-Id"])
+        // Not the web client ID, whose cursor requests Twitch refuses with "failed integrity check".
+        assertEquals("kd1unb4b3q4t58fwlpcbzcbnm76a8fp", second.headers["Client-ID"])
         val vars2 = Json.parseToJsonElement(second.body!!.utf8()).jsonObject["variables"]!!.jsonObject
         assertEquals("C3", vars2["cursor"]?.jsonPrimitive?.content)
         assertTrue(!vars2.containsKey("contentOffsetSeconds"))
@@ -175,6 +177,48 @@ class VodChatTest {
         )
         replay.advance(5_000)
         assertTrue(calls <= 6, "made $calls calls")
+    }
+
+    /** Twitch answering offset requests but refusing every cursor, as it did for the web client ID on 2026-10-11. */
+    private class CursorRefusingService(all: List<ChatMessage>) {
+        val inner = FakeService(all)
+        var cursorCalls = 0
+
+        suspend fun fetch(offsetSeconds: Int?, cursor: String?): VodChatPage {
+            if (cursor != null) {
+                cursorCalls++
+                throw IOException("failed integrity check")
+            }
+            return inner.fetch(offsetSeconds, null)
+        }
+    }
+
+    @Test
+    fun whenCursorsAreRefusedReplayCarriesOnByTimeWithoutGapsOrRepeats() = runBlocking {
+        val service = CursorRefusingService((1..40).map { msg("m$it", it * 2_500L) }) // m1@2.5s ... m40@100s
+        val replay = VodChatReplay(service::fetch, lookaheadMs = 10_000, backfillMs = 0)
+        val seen = ArrayList<String>()
+        var position = 0L
+        while (position <= 110_000) {
+            seen += replay.advance(position).map { it.id }
+            position += 1_000
+        }
+        assertEquals((1..40).map { "m$it" }, seen)
+        assertEquals(1, service.cursorCalls) // tried once, then never again
+    }
+
+    @Test
+    fun timePagingMovesPastASecondThatHoldsMoreThanAPage() = runBlocking {
+        // Seven messages in the same second (pages hold three), then one more later.
+        val burst = (1..7).map { msg("b$it", 5_000L) } + msg("after", 9_000L)
+        val service = CursorRefusingService(burst)
+        val replay = VodChatReplay(service::fetch, lookaheadMs = 10_000, backfillMs = 0)
+        val seen = ArrayList<String>()
+        for (position in 0L..20_000L step 1_000L) seen += replay.advance(position).map { it.id }
+        // The paging can't see beyond a page within one second, so some of the burst may be skipped, but it must not
+        // stall there and must never repeat a message.
+        assertTrue("after" in seen, seen.toString())
+        assertEquals(seen.distinct(), seen)
     }
 
     @Test

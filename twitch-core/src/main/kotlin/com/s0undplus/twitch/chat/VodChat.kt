@@ -5,6 +5,7 @@ import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.await
 import java.io.IOException
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -45,7 +46,7 @@ class VodChatApi(private val http: OkHttpClient, private val config: TwitchConfi
         }
         val request = Request.Builder()
             .url(config.gqlUrl)
-            .header("Client-ID", config.webClientId)
+            .header("Client-ID", config.commentsClientId)
             .header("X-Device-Id", config.deviceId)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
@@ -134,18 +135,31 @@ class VodChatReplay(
     private var hasMore = true
     private var primed = false
 
+    /**
+     * Set once a cursor request has failed. Twitch has rejected cursor continuations ("failed integrity check") for
+     * some client IDs while still answering requests by time offset, so from then on paging continues by offset.
+     */
+    private var byOffset = false
+
+    /** Offset of the newest message taken in, and the ids taken in at exactly that offset (offset pages overlap). */
+    private var newestOffsetMs = -1L
+    private val idsAtNewest = HashSet<String>()
+
+    /** Where the next offset request starts; nudged forward when a page added nothing new. */
+    private var nextOffsetSeconds = 0
+
     /** Messages that became due since the last call, oldest first. Throws if the chat service fails. */
     suspend fun advance(positionMs: Long): List<ChatMessage> {
         var justPrimed = false
         if (!primed) {
             val startSeconds = ((positionMs - backfillMs).coerceAtLeast(0) / 1000).toInt()
-            accept(fetch(startSeconds, null))
+            accept(fetch(startSeconds, null), requestedSeconds = startSeconds)
             primed = true
             justPrimed = true
         }
         var pages = 0
         while (hasMore && pages < MAX_PAGES_PER_CALL && (buffer.isEmpty() || (buffer.last().vodOffsetMs ?: 0) < positionMs + lookaheadMs)) {
-            accept(fetch(null, cursor))
+            nextPage()
             pages++
         }
         val due = ArrayList<ChatMessage>()
@@ -159,11 +173,52 @@ class VodChatReplay(
         cursor = null
         hasMore = true
         primed = false
+        newestOffsetMs = -1L
+        idsAtNewest.clear()
+        // [byOffset] is kept: a cursor that was refused once will be refused again.
     }
 
-    private fun accept(page: VodChatPage) {
-        buffer.addAll(page.messages)
-        hasMore = page.hasNext && page.nextCursor != null && page.nextCursor != cursor
+    private suspend fun nextPage() {
+        val current = cursor
+        if (!byOffset && current != null) {
+            try {
+                accept(fetch(null, current), requestedSeconds = null)
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                byOffset = true // fall through and continue by time instead
+            }
+        }
+        val from = nextOffsetSeconds
+        accept(fetch(from, null), requestedSeconds = from)
+    }
+
+    private fun accept(page: VodChatPage, requestedSeconds: Int?) {
+        // Offset pages start at a whole second and so repeat what was already taken in at that second: skip those.
+        val fresh = page.messages.filter { message ->
+            val offset = message.vodOffsetMs ?: 0
+            offset > newestOffsetMs || (offset == newestOffsetMs && message.id !in idsAtNewest)
+        }
+        for (message in fresh) {
+            val offset = message.vodOffsetMs ?: 0
+            if (offset > newestOffsetMs) {
+                newestOffsetMs = offset
+                idsAtNewest.clear()
+            }
+            idsAtNewest += message.id
+        }
+        buffer.addAll(fresh)
+        val newestSecond = (newestOffsetMs.coerceAtLeast(0) / 1000).toInt()
+        if (byOffset) {
+            // Continuing by time: an empty page means the end of the video. A page that added nothing new (a single
+            // second with more messages than a page holds) moves on a second, so this always makes progress.
+            hasMore = page.messages.isNotEmpty()
+            nextOffsetSeconds = if (fresh.isEmpty()) (requestedSeconds ?: nextOffsetSeconds) + 1 else newestSecond
+        } else {
+            hasMore = page.hasNext && page.nextCursor != null && page.nextCursor != cursor
+            nextOffsetSeconds = newestSecond
+        }
         cursor = page.nextCursor
     }
 

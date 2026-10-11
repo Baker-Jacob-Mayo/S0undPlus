@@ -49,6 +49,7 @@ import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.data.AppTheme
 import com.s0undplus.tv.data.ChatLayout
 import com.s0undplus.tv.data.DeletedStyle
+import com.s0undplus.tv.data.OtherChannels
 import com.s0undplus.tv.ui.components.FocusSurface
 import com.s0undplus.tv.ui.components.LoadingState
 import com.s0undplus.tv.ui.components.PillButton
@@ -208,6 +209,16 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
             item { ToggleRow("Follow raids automatically", s.followRaids) { v -> update { it.copy(followRaids = v) } } }
             item { ToggleRow("Picture-in-picture on Home button", s.pipOnHome) { v -> update { it.copy(pipOnHome = v) } } }
             item { ToggleRow("Zoom video to fill the screen (crops 4:3 and letterboxed streams)", s.zoomVideo) { v -> update { it.copy(zoomVideo = v) } } }
+            item {
+                ToggleRow("Switch the TV to the stream's frame rate (smooths 50 fps streams)", s.matchFrameRate) { v ->
+                    update { it.copy(matchFrameRate = v) }
+                }
+            }
+            item {
+                CycleRow("Other channels to switch to (peek, Channel +/-)", s.otherChannels, OtherChannels.entries, { it.label }) { v ->
+                    update { it.copy(otherChannels = v) }
+                }
+            }
             item {
                 ToggleRow("Live previews on cards (needs a capable device)", s.livePreviews) { v -> update { it.copy(livePreviews = v) } }
             }
@@ -371,8 +382,8 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
             item { Header("Remote shortcuts (in the player)") }
             item {
                 Text(
-                    "OK / Up: controls · Down: peek at other live channels · Left / Right: hide / show chat (live) or seek ±10 s (VOD)\n" +
-                        "Red: chat · Green: quality · Yellow: audio-only · Blue: peek · Channel +/-: next / previous followed channel\n" +
+                    "OK / Up / Down: controls · Left / Right: hide / show chat (live) or seek ±10 s (VOD)\n" +
+                        "Red: chat · Green: quality · Yellow: audio-only · Blue: other live channels · Channel +/-: next / previous channel\n" +
                         "Play/Pause, Rewind, Fast-forward · Info or Menu: controls · Back: close menu, then controls, then leave",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Muted,

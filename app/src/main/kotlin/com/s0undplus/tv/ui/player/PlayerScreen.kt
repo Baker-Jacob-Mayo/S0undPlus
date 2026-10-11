@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.os.SystemClock
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -73,6 +74,7 @@ import com.s0undplus.tv.LocalActivityBridge
 import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.ChatLayout
+import com.s0undplus.tv.data.OtherChannels
 import com.s0undplus.tv.ui.components.MessageState
 import com.s0undplus.tv.ui.components.QrDialog
 import com.s0undplus.tv.ui.components.Spinner
@@ -131,7 +133,7 @@ fun PlayerScreen(
     val settings by controller.settings.collectAsStateWithLifecycle()
     val phase by controller.phase.collectAsStateWithLifecycle()
     val others by controller.others.collectAsStateWithLifecycle()
-    val othersFailed by controller.othersFailed.collectAsStateWithLifecycle()
+    val othersStatus by controller.othersStatus.collectAsStateWithLifecycle()
     val raid by controller.raid.collectAsStateWithLifecycle()
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     val isLive = controller.isLive
@@ -192,6 +194,7 @@ fun PlayerScreen(
     val recoveryJob = remember { arrayOfNulls<Job>(1) }
     val stall = remember { StallDetector() }
 
+
     val rootFocus = remember { FocusRequester() }
     val firstControl = remember { FocusRequester() }
     val selectedQualityItem = remember { FocusRequester() }
@@ -199,6 +202,20 @@ fun PlayerScreen(
 
     val ready = (phase as? PlayerController.Phase.Ready)?.stream
     val readyVia = (phase as? PlayerController.Phase.Ready)?.via
+
+    // The TV's refresh rate follows the stream's frame rate (once per stream), and goes back to normal on leaving.
+    val activity = LocalActivity.current
+    val frameRate = remember(activity) { activity?.let(::FrameRateSwitcher) }
+    val streamFps = ready?.variants?.filterNot { it.isAudioOnly }?.maxOfOrNull { it.frameRate }?.toFloat() ?: 0f
+    LaunchedEffect(frameRate, ready?.masterUrl, streamFps, settings.matchFrameRate, audioOnly) {
+        val switcher = frameRate ?: return@LaunchedEffect
+        if (settings.matchFrameRate && !audioOnly && ready != null) {
+            switcher.apply(ready.masterUrl, streamFps)
+        } else {
+            switcher.reset()
+        }
+    }
+    DisposableEffect(frameRate) { onDispose { frameRate?.reset() } }
     // A stream that already came from the proxy list is expected to be ad-free, so only a direct stream is watched.
     val watchAds = isLive && settings.adMode != AdMode.OFF && !(settings.adMode == AdMode.PROXY && readyVia != null)
     val swapAds = settings.adMode == AdMode.HTTP_PROXY || settings.adMode == AdMode.VIDEO_SWAP
@@ -609,12 +626,9 @@ fun PlayerScreen(
                 // With the overlay hidden, the D-pad drives playback instead of moving focus.
                 if (controlsVisible || menu != Menu.None) return@onPreviewKeyEvent false
                 when {
-                    confirm || event.key == Key.DirectionUp -> {
+                    // Other channels are reached from the controls or the blue button, never by a stray Down press.
+                    confirm || event.key == Key.DirectionUp || event.key == Key.DirectionDown -> {
                         controlsVisible = true
-                        true
-                    }
-                    event.key == Key.DirectionDown -> {
-                        if (isLive) openPeek() else controlsVisible = true
                         true
                     }
                     event.key == Key.DirectionLeft -> {
@@ -820,7 +834,8 @@ fun PlayerScreen(
                 streams = others.filterNot { it.userLogin.equals(channelLogin, ignoreCase = true) },
                 firstItem = firstPeekItem,
                 modifier = Modifier.align(Alignment.BottomCenter),
-                failed = othersFailed,
+                status = othersStatus,
+                followedOnly = settings.otherChannels == OtherChannels.FOLLOWED,
                 onPick = { stream ->
                     menu = Menu.None
                     onSwitch(stream.toPlayTarget())

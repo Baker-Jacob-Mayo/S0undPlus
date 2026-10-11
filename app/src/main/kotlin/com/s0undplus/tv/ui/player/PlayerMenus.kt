@@ -45,7 +45,8 @@ internal fun PeekPanel(
     firstItem: FocusRequester,
     onPick: (Stream) -> Unit,
     modifier: Modifier = Modifier,
-    failed: Boolean = false,
+    status: OthersStatus = OthersStatus.Loading,
+    followedOnly: Boolean = true,
 ) {
     // The panel can open before the list has loaded; take focus as soon as there is a first card to take it.
     LaunchedEffect(streams.isNotEmpty()) {
@@ -66,7 +67,16 @@ internal fun PeekPanel(
     ) {
         Text("Peek — pick a channel to switch (Back to close)", style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
         if (streams.isEmpty()) {
-            Text(if (failed) "Couldn't load other channels." else "Loading channels…", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
+            Text(
+                when {
+                    status == OthersStatus.Failed -> "Couldn't load channels. Close this and try again."
+                    status != OthersStatus.Loaded -> "Loading channels…"
+                    followedOnly -> "None of the other channels you follow are live right now."
+                    else -> "No other channels are live right now."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = Palette.Muted,
+            )
         } else {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(streams, key = { it.userId }) { stream ->

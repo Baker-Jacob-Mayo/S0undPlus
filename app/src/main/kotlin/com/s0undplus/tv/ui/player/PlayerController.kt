@@ -3,6 +3,7 @@ package com.s0undplus.tv.ui.player
 import android.os.SystemClock
 import com.s0undplus.tv.AppContainer
 import com.s0undplus.tv.data.AdMode
+import com.s0undplus.tv.data.OtherChannels
 import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.ui.components.describe
 import com.s0undplus.tv.ui.nav.PlayTarget
@@ -73,13 +74,16 @@ class PlayerController(
 
     private val _others = MutableStateFlow<List<Stream>>(emptyList())
 
-    /** Other live channels for peek view and channel up/down: the viewer's follows first, then popular streams. */
+    /**
+     * Live channels for peek view and Channel +/-: the viewer's follows (the one on screen included, so the order is
+     * stable), plus popular streams when the setting asks for them and few followed channels are live.
+     */
     val others: StateFlow<List<Stream>> = _others.asStateFlow()
 
-    private val _othersFailed = MutableStateFlow(false)
+    private val _othersStatus = MutableStateFlow(OthersStatus.Idle)
 
-    /** True when [others] could not be loaded, so the peek view can say so instead of loading for ever. */
-    val othersFailed: StateFlow<Boolean> = _othersFailed.asStateFlow()
+    /** Whether [others] is loading, loaded or failed, so the peek view can say which instead of loading for ever. */
+    val othersStatus: StateFlow<OthersStatus> = _othersStatus.asStateFlow()
 
     /** The name to show for the channel: the target's own, upgraded to Twitch's capitalised one for deep links. */
     private val _displayName = MutableStateFlow(
@@ -261,31 +265,28 @@ class PlayerController(
 
     /** Loads [others] once (cheap if already loaded). */
     fun loadOthers() {
-        if (_others.value.isNotEmpty()) return
-        _othersFailed.value = false
+        if (_others.value.isNotEmpty() || _othersStatus.value == OthersStatus.Loading) return
+        _othersStatus.value = OthersStatus.Loading
         val current = when (target) {
             is PlayTarget.Live -> target.login
             is PlayTarget.Vod -> target.channelLogin
         }
         scope.launch {
             try {
-                // The channel being watched is never offered. Popular streams fill the list so it is never empty when
-                // the only followed channel that is live is the one on screen.
+                // In the followed list's own order, the channel on screen included: Channel +/- steps from its place.
                 val followed = c.helix.followedStreams(first = 40).items
-                    .filterNot { it.userLogin.equals(current, ignoreCase = true) }
-                val list = if (followed.size >= MIN_OTHERS) {
+                val otherFollowed = followed.count { !it.userLogin.equals(current, ignoreCase = true) }
+                val mode = c.settings.settings.first().otherChannels
+                _others.value = if (mode == OtherChannels.FOLLOWED || otherFollowed >= MIN_OTHERS) {
                     followed
                 } else {
-                    (followed + c.helix.streams(first = 20).items)
-                        .filterNot { it.userLogin.equals(current, ignoreCase = true) }
-                        .distinctBy { it.userId }
+                    (followed + c.helix.streams(first = 20).items).distinctBy { it.userId }
                 }
-                _others.value = list
-                if (list.isEmpty()) _othersFailed.value = true
+                _othersStatus.value = OthersStatus.Loaded
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _othersFailed.value = true
+                _othersStatus.value = OthersStatus.Failed
             }
         }
     }
@@ -309,7 +310,7 @@ class PlayerController(
         /** One load works down the proxy list for at most this long before falling back to Twitch directly. */
         const val PROXY_BUDGET_MS = 20_000L
 
-        /** Fewer other followed channels live than this, and popular streams are added to the peek list. */
+        /** With "followed, then popular": fewer other followed channels live than this, and popular ones are added. */
         const val MIN_OTHERS = 4
 
         const val STREAM_INFO_MIN_AGE_MS = 55_000L
@@ -321,3 +322,5 @@ class PlayerController(
         const val ALT_COOLDOWN_MS = 10 * 60_000L
     }
 }
+
+enum class OthersStatus { Idle, Loading, Loaded, Failed }

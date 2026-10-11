@@ -31,6 +31,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 
+/** Which channels the player offers in its channel list (peek, Channel +/-). */
+enum class OtherChannels(val label: String) {
+    FOLLOWED("Followed only"),
+    FOLLOWED_AND_POPULAR("Followed, then popular"),
+}
+
 enum class ChatLayout(val label: String) {
     OVERLAY("Overlay"),
     SIDE("Beside video"),
@@ -99,6 +105,14 @@ data class AppSettings(
     val livePreviews: Boolean = false,
     /** Fill the screen with the video (cropping the edges of a 4:3 or letterboxed stream) instead of fitting it. */
     val zoomVideo: Boolean = false,
+    /** Peek and Channel +/- list only followed channels unless this says otherwise. */
+    val otherChannels: OtherChannels = OtherChannels.FOLLOWED,
+    /**
+     * Switch the TV's refresh rate to suit the stream (50 Hz for a 50 fps stream, say) instead of showing it on a 60 Hz
+     * picture, which judders. The system's own "match frame rate" only does this when the switch is seamless, and on
+     * most TV boxes it never is.
+     */
+    val matchFrameRate: Boolean = true,
     // Background / system
     val goLiveNotifications: Boolean = false,
     val homeChannel: Boolean = false,
@@ -186,6 +200,8 @@ class SettingsRepository(private val context: Context) {
         val pipOnHome = booleanPreferencesKey("pip_on_home")
         val livePreviews = booleanPreferencesKey("live_previews")
         val zoomVideo = booleanPreferencesKey("zoom_video")
+        val otherChannels = stringPreferencesKey("other_channels")
+        val matchFrameRate = booleanPreferencesKey("match_frame_rate")
         val goLive = booleanPreferencesKey("go_live_notifications")
         val homeChannel = booleanPreferencesKey("home_channel")
         val autoUpdate = booleanPreferencesKey("auto_update_check")
@@ -318,6 +334,8 @@ class SettingsRepository(private val context: Context) {
             pipOnHome = this[Keys.pipOnHome] ?: d.pipOnHome,
             livePreviews = this[Keys.livePreviews] ?: d.livePreviews,
             zoomVideo = this[Keys.zoomVideo] ?: d.zoomVideo,
+            otherChannels = enumOf(this[Keys.otherChannels], d.otherChannels),
+            matchFrameRate = this[Keys.matchFrameRate] ?: d.matchFrameRate,
             goLiveNotifications = this[Keys.goLive] ?: d.goLiveNotifications,
             homeChannel = this[Keys.homeChannel] ?: d.homeChannel,
             autoUpdateCheck = this[Keys.autoUpdate] ?: d.autoUpdateCheck,
@@ -362,6 +380,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.pipOnHome] = s.pipOnHome
         this[Keys.livePreviews] = s.livePreviews
         this[Keys.zoomVideo] = s.zoomVideo
+        this[Keys.otherChannels] = s.otherChannels.name
+        this[Keys.matchFrameRate] = s.matchFrameRate
         this[Keys.goLive] = s.goLiveNotifications
         this[Keys.homeChannel] = s.homeChannel
         this[Keys.autoUpdate] = s.autoUpdateCheck

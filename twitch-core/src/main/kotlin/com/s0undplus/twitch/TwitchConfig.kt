@@ -22,6 +22,12 @@ data class TwitchConfig(
      * that can be checked offline.
      */
     val androidClientId: String = "ue6666qo983tsx6so1t0vnawi233wa",
+    /**
+     * Client ID for past-broadcast chat (`VideoCommentsByOffsetOrCursor`). With the web one, Twitch answers the first page
+     * but refuses every continuation ("failed integrity check", seen 2026-10-11), so replay stopped after a minute;
+     * this one (the ID chat-download tools use) pages normally. The replay also falls back to paging by time if refused.
+     */
+    val commentsClientId: String = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp",
     val ircUrl: String = "wss://irc-ws.chat.twitch.tv:443",
     val eventSubUrl: String = "wss://eventsub.wss.twitch.tv/ws",
     val recentMessagesUrl: String = "https://recent-messages.robotty.de/api/v2/recent-messages",

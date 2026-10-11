@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -99,6 +100,27 @@ class MainActivity : ComponentActivity() {
                 first = false
             }
         }
+    }
+
+    /** Whether the Back press now in progress started here (its key-down was taken by [dispatchKeyEvent]). */
+    private var backDown = false
+
+    /**
+     * Back goes straight to the back handlers. Compose otherwise turns the Back key into "move focus to the
+     * enclosing focusable" and consumes it whenever there is one, so closing a menu, the player controls or a screen
+     * took two presses: the first only moved focus. The on-screen keyboard still gets Back first (it is a separate
+     * window); Android 16 and later deliver Back this way anyway.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) backDown = true
+            KeyEvent.ACTION_UP -> {
+                if (backDown && !event.isCanceled) onBackPressedDispatcher.onBackPressed()
+                backDown = false
+            }
+        }
+        return true
     }
 
     override fun onNewIntent(intent: Intent) {
