@@ -16,6 +16,7 @@ import com.s0undplus.twitch.playback.PlaybackStream
 import com.s0undplus.twitch.playback.clientFor
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -23,6 +24,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 
@@ -91,7 +93,7 @@ enum class AdState {
  * [alt] instead of the original while [AdState.Swapped]. While swapped it also watches the ad-free copy itself, and if
  * that turns out to carry an ad it moves on to the next source within the same break.
  *
- * Everything here runs on one thread (the composition's main dispatcher), so no locking is needed.
+ * Everything here runs on the main thread ([run] makes sure of it), so no locking is needed.
  */
 class AdBlocker(
     private val http: OkHttpClient,
@@ -125,13 +127,17 @@ class AdBlocker(
      * with [swap] a break is answered with an ad-free copy instead of only hiding it.
      */
     suspend fun run(watchUrl: () -> String?, swap: Boolean) {
-        coroutineScope {
-            Log.i(TAG, "watching for ad breaks (swap to an ad-free copy: $swap)")
-            planner.reset()
-            scope = this
-            swapEnabled = swap
-            launch { pollPlaylist(watchUrl) }
-            launch { tick() }
+        // Pinned to the main thread whatever called this: ExoPlayer may only be touched there ([liveOffsetMs]), and the
+        // state below is written without locks. Every continuation, including those after a network wait, comes back here.
+        withContext(Dispatchers.Main.immediate) {
+            coroutineScope {
+                Log.i(TAG, "watching for ad breaks (swap to an ad-free copy: $swap)")
+                planner.reset()
+                scope = this
+                swapEnabled = swap
+                launch { pollPlaylist(watchUrl) }
+                launch { tick() }
+            }
         }
     }
 
