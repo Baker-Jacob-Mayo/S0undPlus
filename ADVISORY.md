@@ -531,3 +531,45 @@ Answers change what is worth doing next.
    is a mechanical, large diff that should be done once and early if other languages are ever wanted.
 6. **License.** The README says none has been chosen. Contributors, including automated ones, should know the terms.
 7. **Is `Baker-Jacob-Mayo/S0undPlus` public?** The updater calls the GitHub API unauthenticated and needs it to be.
+
+---
+
+## 10. Implementation status (2026-10-11)
+
+Added by the session that worked through this document, so the next person doesn't redo or second-guess it. Each
+item is its own commit, with the item ID in the message. Every claim in the advisory was checked against the code
+first; where it was wrong or needed adjusting, that is said here.
+
+| ID | Status | Notes |
+|---|---|---|
+| P0-1 | Done | `sized()` fills `%{width}`/`%{height}` first. Tests: `ModelsTest`, `HelixApiTest`. |
+| P0-2 | Done | `RecentMessagesApi` swallows any failure; `CrashGuard` on screen and app scopes (logs only the class and first frame, never messages); login shows a message. |
+| P1-1 | Done | Menu gets `qualityLabel`; focus falls back to Auto when nothing matches. |
+| P1-2 | Done | `PeekPanel` requests focus when its list becomes non-empty. |
+| P1-3 | Done | Both the player and the live-preview player use `DefaultMediaSourceFactory(OkHttpDataSource.Factory(container.http))`. |
+| P1-4 | Done | The three-argument `resume` overload, as suggested (the one-argument one is deprecated in coroutines 1.11). |
+| P1-5 | Done | Login says "Twitch rejected the request (HTTP n)"; playback says "Twitch refused the playback request"; a 403 on a VOD becomes `VodRestrictedException`. The exact `error_code` was not checked, so any 403 on a VOD playlist is treated as restricted. |
+| P2-1 | Done | `TtlCache` (single-flight, LRU, one hour) behind `EmoteCache` and the Helix badge lookup. A set is only cached when every provider answered; a 404 for a channel set counts as an answer. |
+| P2-2 | Partly | 429 is retried. The `session_reconnect` ordering (open the new socket before closing the old) was left alone: rare, invasive, unverifiable here. |
+| P2-3 | Done | |
+| P2-4 | Done | `SavedTextField` saves 500 ms after typing stops, on blur and on dispose. Settings updates now run on the app scope so a pending save survives leaving the screen. |
+| P2-5 | Done | |
+| P2-6 | Done | `PlayerController.displayName` upgrades to Twitch's capitalised name; the user lookup is shared with the raid watcher. |
+| P2-7 | Done | |
+| P2-8 | Done | The README no longer quotes an exact count. |
+| P2-9 | **Declined** | A commit-count version code is `1` on every CI build: both workflows use the default shallow checkout (`fetch-depth: 1`), and `release.yml` must not be changed without the owner. The configuration-cache worry only affects local builds. |
+| P2-10 | Done, with a correction | The task is `:app:testDebugUnitTest`; `testReleaseUnitTest` does not exist under AGP 9 (CI failed on it). `UpdateUi.statusLabel` is not covered because it shares a file with Compose code. `Format.ago` now pluralises correctly. |
+| P2-11 | Done | |
+| P3-1 | Done | Viewer count, uptime, title and category, fetched while the controls are shown. |
+| P3-2 | Done | Past broadcasts / Highlights / Uploads. |
+| P3-3 | Done | `AdBreakDetector.plannedDurationMs` and `AdBreakPlanner.remainingMs`; shown on the cover. |
+| P3-4, P3-5 | Done | `ChatMentions`, bits chip, reply line. |
+| P3-6, P3-7 | Not done | Both need live checks (which static emote variants 7TV/BTTV serve; what 7TV's zero-width flag looks like in the current API). Twitch's own emotes are already static. |
+| P3-8 | Done | |
+| P3-9 | Not done | Clips: the advisory itself says to ask the owner first. |
+| P3-10, P3-11 | Done | Latency text and Jump to live; Fit/Fill (persisted). |
+| P3-12 | See git log | The `PlayerScreen.kt` split is its own commit. |
+
+Beyond this document, an adversarial review of the ad-handling code produced further fixes (planner follows the
+live lag; fetch timeouts and capped reads; overflow-safe dates; swap-key duplicates; failure cool-downs instead of a
+one-way cursor; swap keeps a pause; lifecycle-gated polling). They are in the commit messages.

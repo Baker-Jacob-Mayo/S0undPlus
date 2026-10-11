@@ -30,7 +30,7 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | **Remembers your place** | Going back from a stream returns to the same tab, scroll position and focused card. |
 | **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
 | **Channel pages & VODs** | Profile, live status, past broadcasts, highlights and uploads, with **resume where you left off**, plus a **History** tab of what you watched. |
-| **Player** | Media3 HLS, quality picker with a remembered preference, audio-only mode, live-edge recovery, VOD seeking, touch/swipe gestures (volume, chat, seek). |
+| **Player** | Media3 HLS on the app's shared OkHttp client, quality picker with a remembered preference, audio-only mode, live-edge recovery, **viewer count and uptime**, **seconds behind live with a Jump to live button**, Fit/Fill for 4:3 streams, VOD seeking, touch/swipe gestures (volume, chat, seek). |
 | **Auto-refresh** | If a stream ends or stalls, the app checks the streamer is still online, then re-requests a fresh playback token and reconnects (normal or aggressive mode, configurable retries and interval). |
 | **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). |
 | **Raid redirect** | When the channel you're watching raids another one, you're taken along after a 10 s countdown (Back to stay). Uses Twitch's official EventSub. |
@@ -200,9 +200,9 @@ So "ad-free everywhere" means "a proxy service somebody else runs happens to be 
 |---|---|
 | **Off** *(default)* | Exactly the app as before. Nothing extra is requested; nothing goes to anyone but Twitch. |
 | **Hide ads** | Reads Twitch's ad markers, mutes and blacks out the picture for the length of the ad. You still wait it out. Nothing goes to anyone but Twitch. |
-| **Ad-free copy via proxy URLs** | Plays the whole stream from the proxy list (Xtra's approach 1), a few entries per attempt, falling back to Twitch. No Twitch token is created or sent to the proxy. If it ends up on a direct stream it falls back to hiding ads. |
-| **Ad-free copy via HTTP proxy** | While an ad plays, the stream's playlists are fetched through your HTTP proxy (token / master / media-playlist requests individually switchable; segments always go direct). |
-| **Ad-free copy via video swap** | While an ad plays, re-requests the stream with a different token identity (`platform` / `playerType`) and shows that. |
+| **Ad-free copy via proxy URLs** | Plays the whole stream from the proxy list (Xtra's approach 1). Each load works down the list for up to about 20 s; a proxy that fails is skipped for five minutes and then tried again; if none can be used it plays from Twitch, hides the ads and says so on screen. No Twitch token is created or sent to a proxy. |
+| **Ad-free copy via HTTP proxy** | While an ad plays, the stream's playlists are fetched through your HTTP proxy (token / master / media-playlist requests individually switchable; segments always go direct). If the copy fails, or turns out to carry an ad itself, the ad is hidden instead. |
+| **Ad-free copy via video swap** | While an ad plays, re-requests the stream with a different token identity (`platform` / `playerType`) and shows that, checking that copy for ads too and trying the next identity within the same break. |
 
 Details worth knowing:
 
@@ -219,8 +219,18 @@ Details worth knowing:
   what Twitch serves is up to Twitch and changes over time.
 - Ad detection uses Twitch's own markers (segment titles `Amazon`/`Adform`/`DCM`, `stitched-ad` date ranges). If Twitch
   changes them detection silently stops and the stream just plays normally.
-- Proxy URLs must be `https` and contain `$channel`. A proxy that doesn't answer within 8 seconds is skipped, and each
-  load tries at most three before falling back to Twitch, so a dead list can't hold the player up for long.
+- Proxy URLs must be `https` and contain `$channel` (an address that would resolve to the same place for every channel is
+  rejected). A proxy that doesn't answer within 5 seconds is skipped.
+- While an ad is hidden the cover shows how much of it is left, when the playlist says how long the break is. The picture
+  stays covered and muted until an ad-free copy has actually drawn a frame, and a swap keeps a pause a pause.
+- Ad handling only runs while the screen is on: no polling, token requests or proxy traffic while the app is in the
+  background.
+- **From Xtra's source, read rather than guessed:** a custom proxy request carries no Twitch token and no special headers
+  (Xtra sends none either); the HTTP proxy only carries the media *playlists*, never video segments; a video-swap entry
+  changes just `platform` and `playerType`. Xtra pairs the Android identity with Client-ID `ue6666qo983tsx6so1t0vnawi233wa`
+  (its effective default on a fresh install), which is what S0undPlus now sends for `platform=android`, with a fresh
+  device id per swap request as Xtra does. **Whether Twitch serves different ads for any of that is not something source
+  code can show.**
 
 **Not verified:** the ad logic has been unit-tested (parsers, detector, break timing, routing, proxy auth, failover,
 timeouts), but the playlist fixtures are **synthetic, written from Xtra's rules**, not captured from a real ad break,
@@ -234,7 +244,7 @@ are best-effort and optional.
 
 What has and hasn't been verified:
 
-- ✅ `twitch-core`: **about 190 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
+- ✅ `twitch-core`: **over 200 unit tests** pass locally and on GitHub Actions (JDK 17) — request shapes, pagination, token
   refresh, device-code polling, playlist/IRC/emote parsing, a real WebSocket round-trip with reconnect, an EventSub
   WebSocket flow (welcome → subscribe → raid), VOD chat parsing and replay across seeks, auto-refresh rules, version
   comparison, favorites/history bounds, deep-link parsing, and the ad-handling logic described under [Ads](#ads).
