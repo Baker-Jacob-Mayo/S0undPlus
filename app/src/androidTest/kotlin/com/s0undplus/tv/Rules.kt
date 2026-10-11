@@ -79,7 +79,18 @@ class FailureCapture(private val screenDump: () -> String) : TestWatcher() {
         Log.e(TAG, "$name: the fake server saw ${seen.size} requests; the last ones: ${seen.takeLast(30).joinToString(" | ")}")
         Log.e(TAG, "$name: playlist polls by who: ${FakeStreams.playlistRequests.groupingBy { it }.eachCount()}; segments fetched: ${FakeStreams.segmentRequests.size}")
         Log.e(TAG, "$name: hosts the app tried that are not the fake: ${FakeTwitch.blockedHosts.distinct()}")
+        for (line in ownLogs().lineSequence().filter { it.isNotBlank() }.takeLast(60)) Log.e(TAG, "$name: app log: ${line.take(220)}")
         for (line in screenDump().lineSequence().filter { it.isNotBlank() }.take(150)) Log.e(TAG, "$name: screen: ${line.take(200)}")
+    }
+
+    /** What the app itself logged about ads, playback and loading: a process may read its own log. */
+    private fun ownLogs(): String = try {
+        val process = Runtime.getRuntime().exec(
+            arrayOf("logcat", "-d", "-v", "time", "-s", "AdBlocker", "PlayerScreen", "PagedLoader", "ExoPlayerImpl", "HlsPlaylistTracker"),
+        )
+        process.inputStream.bufferedReader().use { it.readText() }
+    } catch (t: Throwable) {
+        "(could not read the app's log: $t)"
     }
 
     private companion object {

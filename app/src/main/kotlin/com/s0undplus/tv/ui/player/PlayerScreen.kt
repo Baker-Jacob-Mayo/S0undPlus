@@ -1,5 +1,6 @@
 package com.s0undplus.tv.ui.player
 
+import android.util.Log
 import android.content.Context
 import android.media.AudioManager
 import android.os.SystemClock
@@ -373,6 +374,9 @@ fun PlayerScreen(
     }
 
     // Ad handling: watch the original stream's playlist for ad breaks, and mute/black out while one plays.
+    LaunchedEffect(watchAds, swapAds) {
+        Log.d("PlayerScreen", "ad handling: mode=${settings.adMode} watch=$watchAds swap=$swapAds")
+    }
     val watchUrl = rememberUpdatedState(ready?.let { mediaPlaylistUrl(it, qualityChoice, audioOnly, settings.quality) })
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(watchAds, swapAds, ready != null, lifecycleOwner) {
