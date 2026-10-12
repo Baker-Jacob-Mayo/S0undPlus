@@ -10,6 +10,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
+import androidx.compose.material.icons.rounded.OpenWith
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -208,6 +209,7 @@ internal fun OptionsSheet(
     onZoom: () -> Unit,
     onPip: () -> Unit,
     onChatOnPhone: () -> Unit,
+    onAdjustChat: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SidePanel("Options", modifier) {
@@ -215,6 +217,7 @@ internal fun OptionsSheet(
         PanelRow("Audio only", onAudioOnly, icon = Icons.Rounded.Headphones, value = if (audioOnly) "On" else "Off")
         PanelRow("Picture", onZoom, icon = Icons.Rounded.AspectRatio, value = if (zoom) "Fill" else "Fit")
         if (pipSupported) PanelRow("Picture-in-picture", onPip, icon = Icons.Rounded.PictureInPictureAlt)
+        PanelRow("Adjust chat", onAdjustChat, icon = Icons.Rounded.OpenWith)
         PanelRow("Chat on your phone", onChatOnPhone, icon = Icons.Rounded.QrCode2)
     }
 }

@@ -65,11 +65,19 @@ class PlaybackApi(
         }
         val client = route.clientFor(http)
         val platform = PlayerTypes.normalizePlatform(options.platform)
-        val token = requestToken(
-            client, isLive = true, login = channel, vodId = "",
-            playerType = options.playerType, platform = platform, freshDeviceId = options.freshDeviceId,
-        )
-        return load(client, liveMasterUrl(channel, token, platform), onNotFound = { ChannelOfflineException(channel) })
+        // The viewer's own token goes to Twitch directly or not at all.
+        val viewer = options.viewer?.takeIf { route == PlaybackRoute.Direct }
+        val token = try {
+            requestToken(
+                client, isLive = true, login = channel, vodId = "",
+                playerType = options.playerType, platform = platform, freshDeviceId = options.freshDeviceId, viewer = viewer,
+            )
+        } catch (e: IOException) {
+            // A signed-in ticket that Twitch refuses (an expired or revoked sign-in) still leaves the anonymous one.
+            if (viewer == null) throw e
+            requestToken(client, isLive = true, login = channel, vodId = "", playerType = options.playerType, platform = platform, freshDeviceId = options.freshDeviceId)
+        }
+        return load(client, liveMasterUrl(channel, token, platform, options.codecs), onNotFound = { ChannelOfflineException(channel) })
     }
 
     suspend fun vod(videoId: String): PlaybackStream {
@@ -85,9 +93,14 @@ class PlaybackApi(
         )
     }
 
-    internal fun liveMasterUrl(login: String, token: PlaybackToken, platform: String = PlayerTypes.WEB): HttpUrl =
+    internal fun liveMasterUrl(
+        login: String,
+        token: PlaybackToken,
+        platform: String = PlayerTypes.WEB,
+        codecs: List<String> = listOf("h264"),
+    ): HttpUrl =
         "${config.usherUrl}/api/v2/channel/hls/$login.m3u8".toHttpUrl().newBuilder()
-            .commonParams(platform)
+            .commonParams(platform, codecs)
             .addQueryParameter("fast_bread", "true") // low-latency
             .addQueryParameter("sig", token.signature)
             .addQueryParameter("token", token.value)
@@ -119,13 +132,13 @@ class PlaybackApi(
         return builder.build()
     }
 
-    private fun HttpUrl.Builder.commonParams(platform: String): HttpUrl.Builder = this
+    private fun HttpUrl.Builder.commonParams(platform: String, codecs: List<String> = listOf("h264")): HttpUrl.Builder = this
         .addQueryParameter("allow_source", "true")
         .addQueryParameter("allow_audio_only", "true")
         .addQueryParameter("playlist_include_framerate", "true")
         .addQueryParameter("platform", platform)
-        // H.264 only: every TV decodes it; HEVC/AV1 rungs are a coin-flip on cheap Google TV boxes.
-        .addQueryParameter("supported_codecs", "h264")
+        // H.264 unless the caller knows the TV decodes more: HEVC/AV1 rungs are a coin-flip on cheap Google TV boxes.
+        .addQueryParameter("supported_codecs", codecs.ifEmpty { listOf("h264") }.joinToString(","))
         .addQueryParameter("p", random.nextInt(0, 9_999_999).toString())
 
     private suspend fun load(
@@ -162,6 +175,7 @@ class PlaybackApi(
         playerType: String,
         platform: String,
         freshDeviceId: Boolean = false,
+        viewer: ViewerToken? = null,
     ): PlaybackToken {
         val variables = buildJsonObject {
             put("isLive", isLive)
@@ -189,12 +203,13 @@ class PlaybackApi(
             },
         )
         // The Android identity is asked for with the Android client ID (as Xtra pairs them); everything else uses the web one.
-        val clientId = if (platform == PlayerTypes.ANDROID) config.androidClientId else config.webClientId
+        // A signed-in ticket is asked for with the client ID the viewer signed in to: Twitch checks they match.
+        val clientId = viewer?.clientId ?: if (platform == PlayerTypes.ANDROID) config.androidClientId else config.webClientId
         val deviceId = if (freshDeviceId) randomDeviceId() else config.deviceId
         var lastFailure: IOException? = null
         for (body in attempts) {
             try {
-                return postGql(client, body, isLive, clientId, deviceId)
+                return postGql(client, body, isLive, clientId, deviceId, viewer?.accessToken)
             } catch (e: TwitchApiException) {
                 lastFailure = e
             } catch (e: GqlTokenException) {
@@ -215,11 +230,13 @@ class PlaybackApi(
         isLive: Boolean,
         clientId: String,
         deviceId: String,
+        oauthToken: String? = null,
     ): PlaybackToken {
         val request = Request.Builder()
             .url(config.gqlUrl)
             .header("Client-ID", clientId)
             .header("X-Device-Id", deviceId)
+            .apply { if (oauthToken != null) header("Authorization", "OAuth $oauthToken") }
             .post(body.toString().toRequestBody(JSON))
             .build()
         client.newCall(request).await().use { response ->

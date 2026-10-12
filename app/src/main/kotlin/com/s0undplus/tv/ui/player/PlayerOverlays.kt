@@ -129,6 +129,7 @@ internal fun ControlsOverlay(
     onClose: () -> Unit,
     /** Room to leave on the right for chat drawn over the video, so the title doesn't run underneath it. */
     headerEndInset: Dp = 0.dp,
+    headerStartInset: Dp = 0.dp,
 ) {
     // One backdrop over the whole screen, chat included: dark at the top and bottom where the text and buttons are, clear
     // in the middle. On a busy stream the buttons were unreadable over the picture and the chat.
@@ -145,7 +146,7 @@ internal fun ControlsOverlay(
                 ),
             ),
     ) {
-        Header(target, title, isLive, info, latencyMs, showClock, headerEndInset)
+        Header(target, title, isLive, info, latencyMs, showClock, headerEndInset, headerStartInset)
 
         Column(
             Modifier
@@ -238,9 +239,18 @@ private fun focusQuietly(requester: FocusRequester) {
 }
 
 @Composable
-private fun Header(target: PlayTarget, title: String, isLive: Boolean, info: Stream?, latencyMs: Long?, showClock: Boolean, endInset: Dp) {
+private fun Header(
+    target: PlayTarget,
+    title: String,
+    isLive: Boolean,
+    info: Stream?,
+    latencyMs: Long?,
+    showClock: Boolean,
+    endInset: Dp,
+    startInset: Dp,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp + endInset, top = 28.dp),
+        Modifier.fillMaxWidth().padding(start = 48.dp + startInset, end = 48.dp + endInset, top = 28.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

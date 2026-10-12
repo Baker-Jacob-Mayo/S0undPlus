@@ -113,7 +113,19 @@ data class PlaybackOptions(
     val platform: String = PlayerTypes.WEB,
     /** Send a new random device id with the token request instead of this install's stable one (what Xtra's swap does). */
     val freshDeviceId: Boolean = false,
+    /**
+     * Ask for the playback ticket as this signed-in viewer instead of anonymously (Twitch keeps 1440p for signed-in
+     * viewers). Only for the direct route: a proxy must never see the viewer's token.
+     */
+    val viewer: ViewerToken? = null,
+    /** Video codecs the player can take, best first (`h265` for 1440p, which Twitch sends only as HEVC). */
+    val codecs: List<String> = listOf("h264"),
 )
+
+/** A viewer's sign-in to one of Twitch's own apps ([clientId] is that app's), as playback tickets need it. */
+data class ViewerToken(val accessToken: String, val clientId: String) {
+    override fun toString(): String = "ViewerToken(clientId=$clientId)" // never the token itself, in logs
+}
 
 /** The client that carries this route's requests, derived from [base] so connection pools and settings are shared. */
 fun PlaybackRoute.clientFor(base: OkHttpClient, customUrlTimeoutMs: Long = ProxyClients.CUSTOM_URL_TIMEOUT_MS): OkHttpClient =

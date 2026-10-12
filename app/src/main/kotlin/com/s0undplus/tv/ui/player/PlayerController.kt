@@ -5,6 +5,7 @@ import com.s0undplus.tv.AppContainer
 import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.OtherChannels
 import com.s0undplus.tv.data.AppSettings
+import com.s0undplus.tv.data.VideoDecoders
 import com.s0undplus.tv.ui.components.describe
 import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.twitch.Stream
@@ -192,7 +193,12 @@ class PlayerController(
             }
         }
         try {
-            val direct = c.playback.live(login, PlaybackOptions(playerType = s.effectivePlayerType))
+            // Straight from Twitch, so signed in for 1440p when the viewer is (never through a proxy).
+            val viewer = c.viewerLogin.ticket()
+            val direct = c.playback.live(
+                login,
+                PlaybackOptions(playerType = s.effectivePlayerType, viewer = viewer, codecs = VideoDecoders.forPlayback(viewer != null)),
+            )
             return Phase.Ready(direct, fellBackFromProxies = proxies.isNotEmpty())
         } catch (e: CancellationException) {
             throw e

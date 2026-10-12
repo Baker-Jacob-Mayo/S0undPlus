@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.s0undplus.tv.data.SettingsRepository
+import com.s0undplus.tv.data.ViewerLogin
 import com.s0undplus.tv.ui.util.CrashGuard
 import com.s0undplus.twitch.TwitchConfig
 import com.s0undplus.twitch.api.Browse
@@ -55,6 +56,9 @@ class AppContainer(
     val directory = DirectoryApi(http, config)
     val browse = Browse(directory, helix) { Log.w("Browse", "The directory refused; Helix answers instead", it) }
     val playback = PlaybackApi(http, config)
+
+    /** The optional second sign-in that makes playback tickets signed-in ones (1440p). */
+    val viewerLogin = ViewerLogin(http, config, settings.viewerTokenStore)
     val chat = ChatClient(http, config)
     val emotes = ThirdPartyEmotes(http, config)
 

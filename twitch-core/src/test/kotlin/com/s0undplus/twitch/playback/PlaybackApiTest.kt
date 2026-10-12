@@ -11,6 +11,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -42,6 +43,37 @@ class PlaybackApiTest {
         #EXT-X-STREAM-INF:BANDWIDTH=8446000,RESOLUTION=1920x1080,CODECS="avc1.64002A,mp4a.40.2",VIDEO="chunked",FRAME-RATE=60.000
         https://edge.example/chunked.m3u8
     """.trimIndent()
+
+    @Test
+    fun aSignedInTicketIsAskedForWithTheViewersAppAndTokenAndHevcIsOffered() = runTest {
+        server.enqueue(json(tokenResponse))
+        server.enqueue(text(master))
+
+        api.live("alice", PlaybackOptions(viewer = ViewerToken("viewer-token", "tv-client"), codecs = listOf("h265", "h264")))
+
+        val gql = server.takeRequest()
+        assertEquals("tv-client", gql.headers["Client-ID"])
+        assertEquals("OAuth viewer-token", gql.headers["Authorization"])
+        assertEquals("h265,h264", server.takeRequest().url.queryParameter("supported_codecs"))
+        assertTrue("viewer-token" !in ViewerToken("viewer-token", "tv-client").toString())
+    }
+
+    @Test
+    fun aRefusedSignedInTicketFallsBackToTheAnonymousOne() = runTest {
+        server.enqueue(json("""{"error":"Unauthorized","status":401}""", 401)) // the full query
+        server.enqueue(json("""{"error":"Unauthorized","status":401}""", 401)) // the persisted one
+        server.enqueue(json(tokenResponse))
+        server.enqueue(text(master))
+
+        val stream = api.live("alice", PlaybackOptions(viewer = ViewerToken("expired", "tv-client")))
+
+        server.takeRequest()
+        server.takeRequest()
+        val anonymous = server.takeRequest()
+        assertEquals("kimne78kx3ncx6brgo4mv6wki5h1ko", anonymous.headers["Client-ID"])
+        assertNull(anonymous.headers["Authorization"])
+        assertEquals(listOf("1080p60 (source)"), stream.variants.map { it.name })
+    }
 
     @Test
     fun liveFlowPostsGqlThenFetchesSignedUsherPlaylist() = runTest {

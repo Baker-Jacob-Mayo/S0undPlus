@@ -63,6 +63,9 @@ import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.data.AppTheme
 import com.s0undplus.tv.data.ChatLayout
+import com.s0undplus.tv.data.ChatPlacement
+import com.s0undplus.tv.data.ChatPosition
+import com.s0undplus.tv.data.VideoDecoders
 import com.s0undplus.tv.data.DeletedStyle
 import com.s0undplus.tv.data.OtherChannels
 import com.s0undplus.tv.ui.components.FocusSurface
@@ -129,6 +132,10 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
     var seed by remember { mutableStateOf(loaded) }
     var resetCount by remember { mutableIntStateOf(0) }
     var newProxy by remember { mutableStateOf("") }
+    var showViewerLogin by remember { mutableStateOf(false) }
+    val viewerRow = remember { FocusRequester() }
+    val viewer by container.viewerLogin.tokens.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { container.viewerLogin.restore() }
     var proxyError by remember { mutableStateOf<String?>(null) }
     var proxyStatus by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var checkingProxies by remember { mutableStateOf(false) }
@@ -218,8 +225,38 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
 
             item(key = "h:Chat") { Header("Chat") }
             item { ToggleRow("Show chat by default", s.chatVisible) { v -> update { it.copy(chatVisible = v) } } }
+            // Where chat sits and how big: rows here, or Options > Adjust chat in the player to place it over a stream.
+            val chat = s.chatPlacement
+            fun place(transform: (ChatPlacement) -> ChatPlacement) = update { it.copy(chatPlacement = transform(it.chatPlacement)) }
             item {
-                CycleRow("Chat layout", s.chatLayout, ChatLayout.entries, { it.label }) { v -> update { it.copy(chatLayout = v) } }
+                CycleRow(
+                    "Chat position", chat.position, ChatPosition.entries, { it.label },
+                    help = "Options > Adjust chat in the player moves and sizes it over the stream (and is how floating chat is placed).",
+                ) { v -> place { it.copy(position = v) } }
+            }
+            if (!chat.floating) {
+                item {
+                    CycleRow("Chat on the side", s.chatLayout, ChatLayout.entries, { it.label }, help = "Beside the video makes the picture smaller to fit it.") { v ->
+                        update { it.copy(chatLayout = v) }
+                    }
+                }
+            }
+            item {
+                CycleRow("Chat width", chat.widthPercent, percentSteps(ChatPlacement.MIN_WIDTH, ChatPlacement.MAX_WIDTH), { "$it% of the screen" }) { v ->
+                    place { if (it.floating) it.copy(floatWidth = v) else it.copy(sideWidth = v) }
+                }
+            }
+            if (!chat.beside) {
+                item {
+                    CycleRow("Chat height", chat.heightPercent, percentSteps(ChatPlacement.MIN_HEIGHT, 100), { "$it% of the screen" }) { v ->
+                        place { if (it.floating) it.copy(floatHeight = v) else it.copy(sideHeight = v) }
+                    }
+                }
+            }
+            if (!chat.floating && !chat.beside && chat.sideHeight < 100) {
+                item {
+                    CycleRow("Chat placement", chat.sidePlace, percentSteps(0, 100), ::placeLabel) { v -> place { it.copy(sidePlace = v) } }
+                }
             }
             item {
                 CycleRow("Chat text size", s.chatTextSize, listOf(0, 1, 2), { SIZE_LABELS[it] }) { v -> update { it.copy(chatTextSize = v) } }
@@ -247,6 +284,16 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
             }
 
             item(key = "h:Playback") { Header("Playback") }
+            item {
+                ValueRow(
+                    "1440p",
+                    viewerLoginLabel(viewer?.login),
+                    Modifier.focusRequester(viewerRow),
+                    help = "Twitch keeps 1440p for signed-in viewers of its own apps: this signs in to Twitch's TV app, for playback only.",
+                ) {
+                    if (VideoDecoders.hevc1440) showViewerLogin = true
+                }
+            }
             item {
                 CycleRow("Preferred quality", s.quality, QualityPreference.OPTIONS, { QualityPreference.label(it) }) { v ->
                     update { it.copy(quality = v) }
@@ -492,6 +539,9 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
           }
         }
     }
+    if (showViewerLogin) {
+        ViewerLoginDialog(container.viewerLogin, onDismiss = { showViewerLogin = false }, returnFocus = viewerRow)
+    }
 }
 
 /**
@@ -575,6 +625,16 @@ private fun ToggleRow(title: String, value: Boolean, modifier: Modifier = Modifi
 }
 
 /** A row that steps through [options] each time it is clicked. */
+/** [from] to [to] in the steps the in-player chat editor uses, so a value set there is always one of these. */
+private fun percentSteps(from: Int, to: Int): List<Int> = (from..to step ChatPlacement.SIZE_STEP).toList()
+
+private fun placeLabel(place: Int): String = when (place) {
+    0 -> "Top"
+    50 -> "Middle"
+    100 -> "Bottom"
+    else -> "$place% of the way down"
+}
+
 @Composable
 private fun <T> CycleRow(
     title: String,

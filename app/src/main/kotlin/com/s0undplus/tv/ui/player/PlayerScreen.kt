@@ -37,6 +37,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.BiasAlignment
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -74,6 +80,8 @@ import com.s0undplus.tv.LocalActivityBridge
 import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.data.AdMode
 import com.s0undplus.tv.data.ChatLayout
+import com.s0undplus.tv.data.ChatPlacement
+import com.s0undplus.tv.data.ChatPosition
 import com.s0undplus.tv.data.OtherChannels
 import com.s0undplus.tv.ui.components.MessageState
 import com.s0undplus.tv.ui.components.QrDialog
@@ -105,7 +113,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import android.view.KeyEvent as AndroidKeyEvent
 
-private enum class Menu { None, Options, Quality, Peek }
+private enum class Menu { None, Options, Quality, Peek, ChatLayout }
 
 private const val SEEK_SMALL_MS = 10_000L
 private const val SEEK_LARGE_MS = 30_000L
@@ -120,7 +128,9 @@ private const val RESUME_WAIT_MS = 12_000L
 /** The longest the picture stays covered while an ad-free copy loads, even if it never draws a frame. */
 private const val ALT_COVER_MAX_MS = 6_000L
 private const val GESTURE_THRESHOLD_PX = 140f
-private val CHAT_WIDTH = 380.dp
+/** The outline round chat while it is being adjusted. */
+private fun Modifier.editOutline(editing: Boolean, shape: Shape = RectangleShape): Modifier =
+    if (editing) border(3.dp, Palette.Brand, shape) else this
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -185,6 +195,9 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(Menu.None) }
+
+    /** Chat's place while it is being adjusted over the stream (null otherwise); kept when the editor closes. */
+    var chatDraft by remember { mutableStateOf<ChatPlacement?>(null) }
     var qualityChoice by remember { mutableStateOf<String?>(null) }
     var audioOnly by remember { mutableStateOf(false) }
     var qualityLabel by remember { mutableStateOf("Auto") }
@@ -228,6 +241,7 @@ fun PlayerScreen(
     val firstControl = remember { FocusRequester() }
     val seekBar = remember { FocusRequester() }
     val firstOptionItem = remember { FocusRequester() }
+    val firstChatLayoutButton = remember { FocusRequester() }
     val selectedQualityItem = remember { FocusRequester() }
     val firstPeekItem = remember { FocusRequester() }
 
@@ -254,7 +268,13 @@ fun PlayerScreen(
     // A stream that already came from the proxy list is expected to be ad-free, so only a direct stream is watched.
     val watchAds = isLive && settings.adMode != AdMode.OFF && !(settings.adMode == AdMode.PROXY && readyVia != null)
     val swapAds = settings.adMode == AdMode.HTTP_PROXY || settings.adMode == AdMode.VIDEO_SWAP
-    val chatShown = settings.chatVisible && !bridge.inPip
+    // Being adjusted, chat shows whether or not it was on.
+    val chatShown = (settings.chatVisible || chatDraft != null) && !bridge.inPip
+    val placement = chatDraft ?: settings.chatPlacement
+    val chatWidthDp = LocalConfiguration.current.screenWidthDp.dp * (placement.widthPercent / 100f)
+    // The controls' title row keeps clear of chat that reaches the top of the screen on its side.
+    val chatCoversHeader = chatShown && !placement.floating &&
+        (placement.beside || (100 - placement.sideHeight) * placement.sidePlace / 100 < 15)
 
     fun saveProgress() {
         val vod = target as? PlayTarget.Vod ?: return
@@ -579,6 +599,7 @@ fun PlayerScreen(
                 menu == Menu.Options -> firstOptionItem.requestFocus()
                 menu == Menu.Quality -> selectedQualityItem.requestFocus()
                 menu == Menu.Peek -> firstPeekItem.requestFocus()
+                menu == Menu.ChatLayout -> firstChatLayoutButton.requestFocus()
                 controlsVisible -> firstControl.requestFocus()
                 else -> rootFocus.requestFocus()
             }
@@ -699,9 +720,15 @@ fun PlayerScreen(
             }
             .focusable(),
     ) {
-        val side = chatShown && settings.chatLayout == ChatLayout.SIDE
+        // Beside the video, chat takes its share of the width and the picture shrinks; otherwise it is drawn over it.
+        val beside = chatShown && placement.beside
+        val chatShare = placement.widthPercent / 100f
+        val editing = chatDraft != null
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
+            if (beside && placement.position == ChatPosition.LEFT) {
+                ChatPanel(controller.chat, settings, Modifier.fillMaxHeight().weight(chatShare).background(Palette.Background).editOutline(editing))
+            }
+            Box(Modifier.weight(if (beside) 1f - chatShare else 1f).fillMaxHeight()) {
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
@@ -776,12 +803,22 @@ fun PlayerScreen(
                     }
                 }
 
-                if (chatShown && !side) {
-                    ChatPanel(
-                        controller.chat,
-                        settings,
-                        Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(CHAT_WIDTH).background(Palette.Scrim),
-                    )
+                if (chatShown && !beside) {
+                    // Down a side it meets the screen's edge; floating, it keeps clear of the edges and has round corners.
+                    val shape = if (placement.floating || placement.heightPercent < 100) RoundedCornerShape(12.dp) else RectangleShape
+                    Box(Modifier.fillMaxSize().padding(if (placement.floating) 24.dp else 0.dp)) {
+                        ChatPanel(
+                            controller.chat,
+                            settings,
+                            Modifier
+                                .align(BiasAlignment(placement.xBias, placement.yBias))
+                                .fillMaxWidth(chatShare)
+                                .fillMaxHeight(placement.heightPercent / 100f)
+                                .clip(shape)
+                                .background(Palette.Scrim)
+                                .editOutline(editing, shape),
+                        )
+                    }
                 }
 
                 if (!bridge.inPip) {
@@ -805,8 +842,8 @@ fun PlayerScreen(
 
             }
 
-            if (side) {
-                ChatPanel(controller.chat, settings, Modifier.fillMaxHeight().width(CHAT_WIDTH).background(Palette.Background))
+            if (beside && placement.position != ChatPosition.LEFT) {
+                ChatPanel(controller.chat, settings, Modifier.fillMaxHeight().weight(chatShare).background(Palette.Background).editOutline(editing))
             }
         }
 
@@ -851,7 +888,23 @@ fun PlayerScreen(
                     controlsVisible = false
                 },
                 onClose = { controlsVisible = false },
-                headerEndInset = if (chatShown) CHAT_WIDTH else 0.dp,
+                headerEndInset = if (chatCoversHeader && placement.position == ChatPosition.RIGHT) chatWidthDp else 0.dp,
+                headerStartInset = if (chatCoversHeader && placement.position == ChatPosition.LEFT) chatWidthDp else 0.dp,
+            )
+        }
+        if (menu == Menu.ChatLayout && !bridge.inPip) {
+            ChatLayoutEditor(
+                placement = placement,
+                onChange = { chatDraft = it },
+                onDone = {
+                    val done = chatDraft
+                    menu = Menu.None
+                    chatDraft = null
+                    if (done != null) {
+                        uiScope.launch { container.settings.update { it.copy(chatLayout = done.style, chatPlacement = done) } }
+                    }
+                },
+                firstButton = firstChatLayoutButton,
             )
         }
         if (menu == Menu.Options && !bridge.inPip) {
@@ -873,6 +926,12 @@ fun PlayerScreen(
                 onChatOnPhone = {
                     menu = Menu.None
                     showChatQr = true
+                },
+                onAdjustChat = {
+                    chatDraft = settings.chatPlacement
+                    // Nothing but the stream and chat on screen while placing it.
+                    controlsVisible = false
+                    menu = Menu.ChatLayout
                 },
             )
         }

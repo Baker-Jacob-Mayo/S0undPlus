@@ -42,9 +42,10 @@ enum class OtherChannels(val label: String) {
     FOLLOWED_AND_POPULAR("Followed, then popular"),
 }
 
+/** How chat down a side shares the screen with the video. */
 enum class ChatLayout(val label: String) {
-    OVERLAY("Overlay"),
-    SIDE("Beside video"),
+    OVERLAY("Over the video"),
+    SIDE("Beside the video"),
 }
 
 enum class AppTheme(val label: String) {
@@ -84,6 +85,8 @@ data class AppSettings(
     // Chat
     val chatVisible: Boolean = true,
     val chatLayout: ChatLayout = ChatLayout.OVERLAY,
+    /** Where chat sits and how big it is; its style is always [chatLayout]. */
+    val chatPlacement: ChatPlacement = ChatPlacement(),
     /** 0 = small, 1 = medium, 2 = large. */
     val chatTextSize: Int = 1,
     /** 0 = small, 1 = medium, 2 = large emotes. */
@@ -175,6 +178,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 class SettingsRepository(private val context: Context) {
     private object Keys {
         val tokens = stringPreferencesKey("auth_tokens")
+        val viewerTokens = stringPreferencesKey("viewer_tokens")
         val favorites = stringPreferencesKey("favorites")
         val appFollows = stringPreferencesKey("app_follows")
         val followedCategories = stringPreferencesKey("followed_categories")
@@ -189,6 +193,7 @@ class SettingsRepository(private val context: Context) {
         val language = stringPreferencesKey("language")
         val chatVisible = booleanPreferencesKey("chat_visible")
         val chatLayout = stringPreferencesKey("chat_layout")
+        val chatPlacement = stringPreferencesKey("chat_placement")
         val chatTextSize = intPreferencesKey("chat_text_size")
         val emoteSize = intPreferencesKey("emote_size")
         val chatTimestamps = booleanPreferencesKey("chat_timestamps")
@@ -239,9 +244,14 @@ class SettingsRepository(private val context: Context) {
     // --- login ---
 
     /** Login tokens live in app-private storage (backups are disabled in the manifest). */
-    val tokenStore: TokenStore = object : TokenStore {
+    val tokenStore: TokenStore = tokenStoreAt(Keys.tokens)
+
+    /** The optional second sign-in, to Twitch's TV app, for 1440p playback tickets (see ViewerLogin). */
+    val viewerTokenStore: TokenStore = tokenStoreAt(Keys.viewerTokens)
+
+    private fun tokenStoreAt(key: Preferences.Key<String>): TokenStore = object : TokenStore {
         override suspend fun load(): AuthTokens? {
-            val raw = context.dataStore.data.first()[Keys.tokens] ?: return null
+            val raw = context.dataStore.data.first()[key] ?: return null
             return try {
                 Json.decodeFromString(AuthTokens.serializer(), raw)
             } catch (_: Exception) {
@@ -252,9 +262,9 @@ class SettingsRepository(private val context: Context) {
         override suspend fun save(tokens: AuthTokens?) {
             context.dataStore.edit { prefs ->
                 if (tokens == null) {
-                    prefs.remove(Keys.tokens)
+                    prefs.remove(key)
                 } else {
-                    prefs[Keys.tokens] = Json.encodeToString(AuthTokens.serializer(), tokens)
+                    prefs[key] = Json.encodeToString(AuthTokens.serializer(), tokens)
                 }
             }
         }
@@ -384,6 +394,7 @@ class SettingsRepository(private val context: Context) {
             language = this[Keys.language] ?: d.language,
             chatVisible = this[Keys.chatVisible] ?: d.chatVisible,
             chatLayout = enumOf(this[Keys.chatLayout], d.chatLayout),
+            chatPlacement = ChatPlacement.decode(this[Keys.chatPlacement], enumOf(this[Keys.chatLayout], d.chatLayout)),
             chatTextSize = (this[Keys.chatTextSize] ?: d.chatTextSize).coerceIn(0, 2),
             emoteSize = (this[Keys.emoteSize] ?: d.emoteSize).coerceIn(0, 2),
             chatTimestamps = this[Keys.chatTimestamps] ?: d.chatTimestamps,
@@ -430,6 +441,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.language] = s.language
         this[Keys.chatVisible] = s.chatVisible
         this[Keys.chatLayout] = s.chatLayout.name
+        this[Keys.chatPlacement] = s.chatPlacement.encode()
         this[Keys.chatTextSize] = s.chatTextSize
         this[Keys.emoteSize] = s.emoteSize
         this[Keys.chatTimestamps] = s.chatTimestamps

@@ -38,7 +38,7 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). Peek and Channel +/− use your followed live channels; Settings → Playback can add popular ones after them. |
 | **Raid redirect** | When the channel you're watching raids another one, you're taken along after a 10 s countdown (Back to stay). Uses Twitch's official EventSub. |
 | **Picture-in-picture** | Press Home while watching and the stream shrinks into a PiP window (Android 8+, device permitting). |
-| **Chat** | Overlay or beside the video; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling, highlighted `@you` mentions, cheer amounts and reply context. **VOD chat replay** in sync with the video. |
+| **Chat** | Down the right or left side (over the video, or beside it with the picture shrunk) or **floating** anywhere, any width and height, moved Up and Down along its side: placed live over the stream with Options > Adjust chat, or in Settings; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling, highlighted `@you` mentions, cheer amounts and reply context. **VOD chat replay** in sync with the video. |
 | **Chat filters** | Hide known bots, `!commands`, blocked words and blocked users. |
 | **Chat on your phone** | QR code that opens the channel's chat on your phone, since TV chat is read-only. |
 | **Live previews** | Optional (off by default): a focused card plays a muted, low-quality preview using one shared player. |
@@ -81,8 +81,9 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 
 The player's controls are laid out like YouTube on TV: a full-width seek bar, and under it one row of round buttons.
 Left to right: play/pause (with back / forward 10 s on videos, and Go live when you're behind), chat, other channels;
-then favorite, channel page and Options. Options holds quality, audio only, picture fit/fill, picture-in-picture and
-chat on your phone. Blue (or the other-channels button) opens the peek view.
+then favorite, channel page and Options. Options holds quality, audio only, picture fit/fill, picture-in-picture,
+Adjust chat (Move and Resize hand the arrows to chat; OK goes back to the buttons, Done or Back keeps it) and chat on
+your phone. Blue (or the other-channels button) opens the peek view.
 
 ## Setup
 
@@ -197,8 +198,15 @@ GraphQL endpoint and then fetches the HLS playlist from `usher.ttvnw.net`. Pleas
   [`PlaybackApi.kt`](twitch-core/src/main/kotlin/com/s0undplus/twitch/playback/PlaybackApi.kt) so a fix is one file.
 - It uses the public web-player client ID (`TwitchConfig.webClientId`), not yours. Your own client ID is used only for
   Helix and login.
-- Playback is anonymous: **no Turbo or subscriber perks**. By default, ads that Twitch stitches into the stream play as
-  they do on the website; see [Ads](#ads) for the optional, opt-in handling.
+- Playback is anonymous by default: **no Turbo or subscriber perks**, and at most 1080p. By default, ads that Twitch
+  stitches into the stream play as they do on the website; see [Ads](#ads) for the optional, opt-in handling.
+- **1440p** (Settings > Playback > 1440p, off until you sign in): Twitch sends 1440p only to signed-in viewers, only
+  as HEVC, and only on tickets for its own apps, which your S0undPlus sign-in can't ask for. So this signs in a second
+  time, with the same code-on-your-phone flow, to **Twitch's own TV app** (`TwitchConfig.androidClientId`), and uses
+  that sign-in for nothing but asking Twitch directly for live streams (never through an ad proxy). HEVC is offered
+  only when the TV has a hardware decoder for 1440p60. With it, Turbo or a channel subscription also removes that
+  channel's ads the normal way. It's stored like the main login (app-private, not backed up) and Sign out removes it.
+  Few streamers send 2K yet: none of 454 live channels checked on 2026-10-12 did.
 - Using unofficial endpoints may be against Twitch's Terms of Service. This project is for personal use; use it at
   your own risk.
 
