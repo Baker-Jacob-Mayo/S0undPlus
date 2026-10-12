@@ -31,6 +31,8 @@ data class Stream(
     val language: String = "",
     @SerialName("thumbnail_url") val thumbnailUrl: String = "",
     @SerialName("is_mature") val isMature: Boolean = false,
+    /** The tags the streamer set (English, Competitive…). */
+    val tags: List<String> = emptyList(),
 ) {
     /** Live preview image at the requested size. */
     fun thumbnail(width: Int = 440, height: Int = 248): String = thumbnailUrl.sized(width, height)
@@ -123,10 +125,11 @@ internal data class BadgeVersionDto(
  * percent signs. The percent forms go first, otherwise `%{width}` would become `%440`.
  */
 /**
- * Box art as Twitch's size template. `search/categories` answers with a fixed 52x72 picture where `games/top` gives
- * the `{width}x{height}` template; this turns the one into the other, so either can be sized (or stored and sized later).
+ * A picture URL as Twitch's size template. Some answers carry a picture of one fixed size where others give the
+ * `{width}x{height}` template (box art from `search/categories` is 52x72, the directory's previews are whatever size was
+ * asked for); this turns the one into the other, so either can be sized (or stored and sized later).
  */
-fun boxArtTemplate(url: String): String = if ("{width}" in url) url else FIXED_SIZE.replace(url, "-{width}x{height}$1")
+fun sizeTemplate(url: String): String = if ("{width}" in url) url else FIXED_SIZE.replace(url, "-{width}x{height}$1")
 
 private val FIXED_SIZE = Regex("""-\d+x\d+(\.\w+)$""")
 

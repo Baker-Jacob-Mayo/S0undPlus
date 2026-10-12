@@ -25,7 +25,6 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,7 +65,6 @@ enum class HomeTab(val label: String, val icon: ImageVector) {
     Search("Search", Icons.Rounded.Search),
     Following("Following", Icons.Rounded.FavoriteBorder),
     Live("Live", Icons.Rounded.LiveTv),
-    Language("Language", Icons.Rounded.Translate),
     Categories("Categories", Icons.Rounded.GridView),
     History("History", Icons.Rounded.History),
     Settings("Settings", Icons.Rounded.Settings),

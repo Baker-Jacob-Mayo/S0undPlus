@@ -84,47 +84,6 @@ fun DialogFrame(
     }
 }
 
-/** Every broadcast language in one list, with the current one ticked and focused, instead of cycling through them. */
-@Composable
-fun LanguageDialog(
-    current: String,
-    onPick: (String) -> Unit,
-    onDismiss: () -> Unit,
-    title: String = "Language row",
-    returnFocus: FocusRequester? = null,
-) {
-    val focus = remember { FocusRequester() }
-    val listState = rememberLazyListState(TwitchLanguages.ALL.indexOfFirst { it.first == current }.coerceAtLeast(0))
-    DialogFrame(onDismiss, focus, Modifier.testTag("languageDialog").width(420.dp).heightIn(max = 460.dp), returnFocus) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(title, style = AppType.TitleL, color = Palette.OnBackground)
-            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(TwitchLanguages.ALL, key = { it.first }) { (code, name) ->
-                    ListRowSurface(
-                        onClick = { onPick(code) },
-                        modifier = Modifier.fillMaxWidth().let { if (code == current) it.focusRequester(focus) else it },
-                    ) { focused ->
-                        Text(
-                            name,
-                            style = AppType.BodyL,
-                            color = if (focused) Palette.OnFocusFill else Palette.OnBackground,
-                            modifier = Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 12.dp),
-                        )
-                        if (code == current) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = "Selected",
-                                tint = if (focused) Palette.OnFocusFill else Palette.BrandSoft,
-                                modifier = Modifier.padding(end = 16.dp).size(20.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /** A QR code to scan with a phone, with what it is for. Back or Close dismisses it. */
 @Composable
 fun QrDialog(title: String, subtitle: String, url: String, onDismiss: () -> Unit, returnFocus: FocusRequester? = null) {

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QrCode2
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.runtime.Composable
@@ -72,9 +73,14 @@ import com.s0undplus.tv.ui.components.QrDialog
 import com.s0undplus.tv.ui.components.RoundIconButton
 import com.s0undplus.tv.ui.components.SkeletonBlock
 import com.s0undplus.tv.ui.components.StreamCard
+import com.s0undplus.tv.ui.components.StreamFilterBar
+import com.s0undplus.tv.ui.components.StreamFilterSheets
 import com.s0undplus.tv.ui.components.VideoCard
 import com.s0undplus.tv.ui.components.describe
+import com.s0undplus.tv.ui.components.filterSummary
 import com.s0undplus.tv.ui.components.focusNotifier
+import com.s0undplus.tv.ui.components.rememberFilterBarState
+import com.s0undplus.tv.ui.components.tagSuggestions
 import com.s0undplus.tv.ui.home.PageHeader
 import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.tv.ui.nav.toPlayTarget
@@ -89,7 +95,8 @@ import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
 import com.s0undplus.twitch.VideoType
-import com.s0undplus.twitch.boxArtTemplate
+import com.s0undplus.twitch.api.StreamFilter
+import com.s0undplus.twitch.sizeTemplate
 import com.s0undplus.twitch.library.AppFollow
 import com.s0undplus.twitch.library.FavoriteChannel
 import com.s0undplus.twitch.library.FollowedCategory
@@ -97,18 +104,42 @@ import com.s0undplus.twitch.library.LibraryOps
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
  * A category's list, scroll position and focused card, scoped to its place on the back stack, so coming back from a
  * stream finds the page as it was, focus on the card that was opened, instead of reloading it.
  */
-class CategoryViewModel(c: AppContainer, id: String) : ViewModel() {
-    val loader = PagedLoader<Stream>(viewModelScope, { it.userId }) { c.helix.streams(gameId = id, after = it) }
+class CategoryViewModel(private val c: AppContainer, private val id: String) : ViewModel() {
+    /** This category's sort and filters, kept between launches (null until read from storage). */
+    val filter: StateFlow<StreamFilter?> = c.settings.categoryFilter(id).stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val loader = PagedLoader<Stream>(viewModelScope, { it.userId }) { cursor ->
+        c.browse.streams(filter.filterNotNull().first(), gameId = id, cursor = cursor)
+    }
     val gridState = LazyGridState()
     var focusedKey: Any? = null
+
+    init {
+        // A changed filter starts the list again from the top.
+        viewModelScope.launch {
+            filter.filterNotNull().drop(1).collect {
+                focusedKey = null
+                if (gridState.layoutInfo.totalItemsCount > 0) gridState.scrollToItem(0)
+                loader.refresh()
+            }
+        }
+    }
+
+    fun setFilter(filter: StreamFilter) {
+        viewModelScope.launch { c.settings.setCategoryFilter(id, filter) }
+    }
 }
 
 /** Top streams in one category: its box art and name, then a grid of who is streaming it. */
@@ -119,42 +150,65 @@ fun CategoryScreen(id: String, name: String, boxArtUrl: String, onOpenStream: (S
     val followedCategories by container.follows.categories.collectAsStateWithLifecycle()
     val followed = followedCategories.any { it.id == id }
     val entry = remember { FocusRequester() }
-    PagedGrid(
-        loader = vm.loader,
-        gridState = vm.gridState,
-        emptyText = "Nobody is streaming $name right now.",
-        itemKey = { it.userId },
-        restoreFocusKey = vm.focusedKey,
-        entryRequester = entry,
-        // This page has no navigation to sit on: a card always has focus, the remembered one when coming back.
-        focusOnReady = { true },
-        onItemFocused = { vm.focusedKey = it },
-        keyline = 190.dp,
-        header = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                if (boxArtUrl.isNotBlank()) {
-                    CardImage(
-                        Category(id, name, boxArtUrl).boxArt(144, 192),
-                        Modifier.width(72.dp).aspectRatio(3f / 4f).clip(RoundedCornerShape(Radius.card)),
-                    )
-                }
-                PageHeader(
-                    name,
-                    "Live channels, most viewers first  ·  Hold OK on a stream for its channel",
-                    Modifier.weight(1f),
-                    action = {
-                        PillButton(
-                            if (followed) "Following" else "Follow",
-                            { container.follows.toggle(FollowedCategory(id, name, boxArtTemplate(boxArtUrl))) },
-                            selected = followed,
-                            icon = if (followed) Icons.Rounded.Check else Icons.Rounded.Add,
-                        )
-                    },
-                )
+    val filter = vm.filter.collectAsStateWithLifecycle().value ?: StreamFilter()
+    val state by vm.loader.state.collectAsStateWithLifecycle()
+    val bar = rememberFilterBarState()
+    val suggestions = remember(state.items) { tagSuggestions(state.items) }
+    // Nothing listed (nobody matches, or Twitch failed): the page has no card to stand on, so refresh takes focus.
+    val nothing = state.items.isEmpty() && (state.loadedAtMillis != 0L || state.error != null)
+    val refresh = remember { FocusRequester() }
+    LaunchedEffect(nothing) {
+        if (nothing) {
+            withFrameNanos { }
+            try {
+                refresh.requestFocus()
+            } catch (_: IllegalStateException) {
+                // not attached yet; the D-pad still reaches the controls
             }
-        },
-    ) { stream, modifier ->
-        StreamCard(stream, { onOpenStream(stream) }, modifier, onLongClick = { onOpenChannel(stream.userLogin) })
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        PagedGrid(
+            loader = vm.loader,
+            gridState = vm.gridState,
+            emptyText = if (filter == StreamFilter()) "Nobody is streaming $name right now." else "Nobody streaming $name matches these filters.",
+            itemKey = { it.userId },
+            restoreFocusKey = vm.focusedKey,
+            entryRequester = entry,
+            // This page has no navigation to sit on: a card always has focus, the remembered one when coming back.
+            focusOnReady = { true },
+            onItemFocused = { vm.focusedKey = it },
+            keyline = 250.dp,
+            header = {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        if (boxArtUrl.isNotBlank()) {
+                            CardImage(
+                                Category(id, name, boxArtUrl).boxArt(144, 192),
+                                Modifier.width(72.dp).aspectRatio(3f / 4f).clip(RoundedCornerShape(Radius.card)),
+                            )
+                        }
+                        PageHeader(
+                            name,
+                            "Live channels  ·  ${filterSummary(filter)}  ·  Hold OK on a stream for its channel",
+                            Modifier.weight(1f),
+                            action = {
+                                PillButton(
+                                    if (followed) "Following" else "Follow",
+                                    { container.follows.toggle(FollowedCategory(id, name, sizeTemplate(boxArtUrl))) },
+                                    selected = followed,
+                                    icon = if (followed) Icons.Rounded.Check else Icons.Rounded.Add,
+                                )
+                            },
+                        )
+                    }
+                    StreamFilterBar(bar, filter, vm.loader::refresh, Modifier.padding(top = 12.dp, bottom = 4.dp), entry = refresh.takeIf { nothing })
+                }
+            },
+        ) { stream, modifier ->
+            StreamCard(stream, { onOpenStream(stream) }, modifier, onLongClick = { onOpenChannel(stream.userLogin) })
+        }
+        StreamFilterSheets(bar, filter, suggestions, vm::setFilter)
     }
 }
 
@@ -204,6 +258,24 @@ class ChannelController(private val c: AppContainer, private val login: String, 
     /** On coming back to the page: try again if it failed, otherwise re-check the live status if it is old. */
     fun retryOrRefresh() {
         if (_state.value is ChannelState.Failed) load() else refreshIfStale()
+    }
+
+    /** The Refresh button: profile, live status and the shelves already shown, again, keeping the page on screen. */
+    fun refresh() {
+        if (_state.value !is ChannelState.Loaded) return load()
+        loadedAtMs = System.currentTimeMillis()
+        scope.launch {
+            try {
+                val user = c.helix.userByLogin(login) ?: return@launch
+                userId = user.id
+                _state.value = ChannelState.Loaded(user, c.helix.streamByLogin(login))
+                videos.values.filter { it.state.value.loadedAtMillis != 0L }.forEach { it.refresh() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // keep what is shown
+            }
+        }
     }
 
     /** Re-checks whether the channel is live when the page was loaded a while ago, without blanking the page. */
@@ -322,6 +394,7 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                                     container.follows.toggle(AppFollow(s.user.login, s.user.displayName, s.user.id))
                                 }
                             },
+                            onRefresh = controller::refresh,
                             firstFocus = firstFocus,
                             followButton = followButton,
                             followPill = followPill,
@@ -414,6 +487,7 @@ private fun ChannelHeader(
     appFollowed: Boolean,
     twitchFollowed: Boolean,
     onFollow: () -> Unit,
+    onRefresh: () -> Unit,
     firstFocus: FocusRequester,
     followButton: FocusRequester,
     followPill: FocusRequester,
@@ -482,6 +556,7 @@ private fun ChannelHeader(
                 icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
             )
             RoundIconButton(Icons.Rounded.QrCode2, "Follow on Twitch", onFollowQr, Modifier.focusRequester(followButton))
+            RoundIconButton(Icons.Rounded.Refresh, "Refresh", onRefresh)
         }
     }
 }

@@ -1,10 +1,13 @@
 package com.s0undplus.tv
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.s0undplus.tv.data.SettingsRepository
 import com.s0undplus.tv.ui.util.CrashGuard
 import com.s0undplus.twitch.TwitchConfig
+import com.s0undplus.twitch.api.Browse
+import com.s0undplus.twitch.api.DirectoryApi
 import com.s0undplus.twitch.api.HelixApi
 import com.s0undplus.twitch.auth.AuthSession
 import com.s0undplus.twitch.auth.TwitchAuth
@@ -47,6 +50,10 @@ class AppContainer(
     val auth = TwitchAuth(http, config)
     val session = AuthSession(auth, settings.tokenStore)
     val helix = HelixApi(http, config, session)
+
+    /** Twitch's browse directory: the sorted and filtered lists of Live, Categories and each category. */
+    val directory = DirectoryApi(http, config)
+    val browse = Browse(directory, helix) { Log.w("Browse", "The directory refused; Helix answers instead", it) }
     val playback = PlaybackApi(http, config)
     val chat = ChatClient(http, config)
     val emotes = ThirdPartyEmotes(http, config)

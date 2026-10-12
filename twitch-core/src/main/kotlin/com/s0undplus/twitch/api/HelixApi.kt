@@ -14,7 +14,7 @@ import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
 import com.s0undplus.twitch.VideoType
-import com.s0undplus.twitch.boxArtTemplate
+import com.s0undplus.twitch.sizeTemplate
 import com.s0undplus.twitch.auth.AuthSession
 import com.s0undplus.twitch.await
 import com.s0undplus.twitch.chat.BadgeDirectory
@@ -57,19 +57,18 @@ class HelixApi(
             "after" to after,
         )
 
-    /** Most-watched live streams, optionally limited to one category and/or language (ISO 639-1). */
+    /** Most-watched live streams, optionally limited to one category and/or any of some languages (ISO 639-1). */
     suspend fun streams(
         gameId: String? = null,
         language: String? = null,
         after: String? = null,
         first: Int = 24,
-    ): Page<Stream> = page(
+        languages: Collection<String> = emptyList(),
+    ): Page<Stream> = pageOf(
         "streams",
         Stream.serializer(),
-        "game_id" to gameId,
-        "language" to language,
-        "first" to first,
-        "after" to after,
+        listOf("game_id" to gameId, "language" to language, "first" to first, "after" to after) +
+            languages.sorted().map { "language" to it },
     )
 
     /** The live stream of one channel, or null when it is offline. */
@@ -96,7 +95,7 @@ class HelixApi(
 
     suspend fun searchCategories(query: String, first: Int = 20): Page<Category> =
         page("search/categories", Category.serializer(), "query" to query, "first" to first).let { p ->
-            p.copy(items = p.items.map { it.copy(boxArtUrl = boxArtTemplate(it.boxArtUrl)) })
+            p.copy(items = p.items.map { it.copy(boxArtUrl = sizeTemplate(it.boxArtUrl)) })
         }
 
     suspend fun userByLogin(login: String): User? =

@@ -26,7 +26,8 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | | |
 |---|---|
 | **Sign in with your phone** | Twitch device-code login with a QR code — no typing on the TV. Read-only scope (`user:read:follows`). |
-| **Browse** | A streaming-service layout: a navigation rail down the left (Search, Following, Live, Language, Categories, History, Settings) that opens over the page when focused. **Following** has a hero describing the focused channel over rows of favorites, live now (followed channels, then followed categories), continue watching and an offline wall; **Live**, **Language**, **Categories** and **History** are grids; **Search** shows channel and category rows. Long-press any stream card to open the channel page. |
+| **Browse** | A streaming-service layout: a navigation rail down the left (Search, Following, Live, Categories, History, Settings) that opens over the page when focused. **Following** has a hero describing the focused channel over rows of favorites, live now (followed channels, then followed categories), continue watching and an offline wall; **Live**, **Categories** and **History** are grids; **Search** shows channel and category rows. Long-press any stream card to open the channel page. |
+| **Sort and filter** | **Live** and each category's page sort by most viewers, most recently started or fewest viewers, and narrow to one or more broadcast languages and to the tags streamers set (offered from what's live). **Categories** narrows to game types (Shooter, RPG, MOBA, IRL…). The choices are kept until you change them; Live starts in your language. A refresh button sits on every page (top right on Following). |
 | **Remembers your place** | Going back from a stream or a channel page returns to the same page, scroll position and focused card. |
 | **Follow in the app** | Follow channels and categories from their pages, kept in the app alongside your Twitch account's follows: they're in Following, Channel +/−, peek and go-live notifications like the rest. Followed categories sit after the live channels in Live now. Every channel card shows where it's followed with a small badge at the lower right: Twitch's mark (your Twitch account), a plus (this app), or the two split across the corner (both). |
 | **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
@@ -157,7 +158,8 @@ The APK carries a baseline profile, but for a sideloaded app Android only compil
 
 ```
 twitch-core/   Plain Kotlin/JVM library (included build) — all Twitch protocol logic, fully unit tested
-  api/         HelixApi: streams, follows, categories, search, users, videos, badges
+  api/         HelixApi: streams, follows, categories, search, users, videos, badges; DirectoryApi (the sorted and
+               filtered browse lists), Browse (directory first, Helix when it refuses)
   auth/        Device-code OAuth + AuthSession (serialized refresh, retry-on-401)
   playback/    PlaybackApi (token → usher → master playlist), MasterPlaylist parser, QualityPreference,
                AdBreak (ad-marker detector, break-timing planner, media-playlist parser), Proxy (routes, host-routed
@@ -167,7 +169,7 @@ twitch-core/   Plain Kotlin/JVM library (included build) — all Twitch protocol
                VOD chat API + VodChatReplay (seek-aware buffering)
   eventsub/    RaidWatcher over the official EventSub WebSocket
   update/      GitHub-release update checker + version comparison
-  library/     bounded favorites, app follows and watch-history operations
+  library/     bounded favorites, app follows and watch-history operations; the browse filters kept between launches
   (root)       AutoRefresh policy + stall detector, DeepLinkParser, languages
 app/           Android TV app — Compose for TV UI, Media3 player, DataStore persistence
 ```
@@ -294,8 +296,8 @@ What has and hasn't been verified:
   Android lint reports **0 errors**; CI inspects the built APK with `aapt2` and `apksigner` (Leanback launcher, banner,
   permissions, `uses-feature`, signer).
 - ✅ **20 instrumented tests run on an Android TV emulator** (API 34, x86, in GitHub Actions) against a fake Twitch served from
-  the emulator itself: signing in with the device code, the Home tabs and D-pad focus, Settings (saving, the language
-  dialog keeping the D-pad inside it, text fields), the on-screen keyboard, and the **real player (ExoPlayer, decoding
+  the emulator itself: signing in with the device code, the Home tabs and D-pad focus, Live's language list (keeping the
+  D-pad inside it, storing what was ticked), Settings (saving, text fields), the on-screen keyboard, and the **real player (ExoPlayer, decoding
   real video segments) through hide-the-ad and swap-to-an-ad-free-copy breaks**. They have already found and fixed three
   real bugs that compilation and the unit tests could not: network reads on the main thread (Android refuses them, so
   lists and playback would fail intermittently), a keyboard that popped up whenever the D-pad passed a text field, and

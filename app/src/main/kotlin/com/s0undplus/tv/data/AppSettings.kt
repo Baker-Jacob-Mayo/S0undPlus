@@ -11,11 +11,13 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.s0undplus.twitch.TwitchLanguages
+import com.s0undplus.twitch.api.StreamFilter
 import com.s0undplus.twitch.auth.AuthTokens
 import com.s0undplus.twitch.auth.TokenStore
 import com.s0undplus.twitch.chat.ChatFilter
 import com.s0undplus.twitch.library.AppFollow
 import com.s0undplus.twitch.library.FavoriteChannel
+import com.s0undplus.twitch.library.FilterOps
 import com.s0undplus.twitch.library.FollowedCategory
 import com.s0undplus.twitch.library.HistoryEntry
 import com.s0undplus.twitch.library.LibraryOps
@@ -29,6 +31,7 @@ import com.s0undplus.twitch.playback.RefreshMode
 import com.s0undplus.twitch.playback.VideoSwapEntry
 import java.util.Locale
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -177,6 +180,9 @@ class SettingsRepository(private val context: Context) {
         val followedCategories = stringPreferencesKey("followed_categories")
         val history = stringPreferencesKey("history")
         val lastLive = stringPreferencesKey("last_live_logins")
+        val liveFilter = stringPreferencesKey("live_filter")
+        val categoryTypes = stringPreferencesKey("category_types")
+        val categoryFilters = stringPreferencesKey("category_filters")
 
         val theme = stringPreferencesKey("theme")
         val showClock = booleanPreferencesKey("show_clock")
@@ -273,6 +279,37 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             val updated = LibraryOps.toggleFollow(LibraryOps.decodeFollows(prefs[Keys.appFollows]), channel)
             prefs[Keys.appFollows] = LibraryOps.encodeFollows(updated)
+        }
+    }
+
+    // --- browse filters (kept until changed) ---
+
+    /** Live's sort and filters. Until first changed: streams in the language the old Language page showed. */
+    val liveFilter: Flow<StreamFilter> = context.dataStore.data.map { prefs ->
+        FilterOps.decodeFilter(prefs[Keys.liveFilter]) ?: StreamFilter(languages = setOf(prefs[Keys.language] ?: AppSettings().language))
+    }.distinctUntilChanged()
+
+    suspend fun setLiveFilter(filter: StreamFilter) {
+        context.dataStore.edit { it[Keys.liveFilter] = FilterOps.encodeFilter(filter) }
+    }
+
+    /** The game types ticked on the Categories page, by tag id. */
+    val categoryTypes: Flow<Set<String>> =
+        context.dataStore.data.map { FilterOps.decodeIds(it[Keys.categoryTypes]) }.distinctUntilChanged()
+
+    suspend fun setCategoryTypes(ids: Set<String>) {
+        context.dataStore.edit { it[Keys.categoryTypes] = FilterOps.encodeIds(ids) }
+    }
+
+    /** One category page's sort and filters (all languages, most viewers first, until changed). */
+    fun categoryFilter(id: String): Flow<StreamFilter> = context.dataStore.data.map { prefs ->
+        FilterOps.decodeCategoryFilters(prefs[Keys.categoryFilters]).firstOrNull { it.id == id }?.filter ?: StreamFilter()
+    }.distinctUntilChanged()
+
+    suspend fun setCategoryFilter(id: String, filter: StreamFilter) {
+        context.dataStore.edit { prefs ->
+            val updated = FilterOps.withCategoryFilter(FilterOps.decodeCategoryFilters(prefs[Keys.categoryFilters]), id, filter)
+            prefs[Keys.categoryFilters] = FilterOps.encodeCategoryFilters(updated)
         }
     }
 

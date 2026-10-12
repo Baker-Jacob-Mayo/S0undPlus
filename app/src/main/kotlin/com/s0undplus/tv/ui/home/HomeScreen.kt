@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -62,6 +61,7 @@ import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.ui.components.AvatarTile
 import com.s0undplus.tv.ui.components.CategoryPoster
 import com.s0undplus.tv.ui.components.CategoryTile
+import com.s0undplus.tv.ui.components.CategoryTypeBar
 import com.s0undplus.tv.ui.components.ClockText
 import com.s0undplus.tv.ui.components.HeroBackdrop
 import com.s0undplus.tv.ui.components.HeroInfo
@@ -69,7 +69,6 @@ import com.s0undplus.tv.ui.components.HeroModel
 import com.s0undplus.tv.ui.components.HeroState
 import com.s0undplus.tv.ui.components.HistoryCard
 import com.s0undplus.tv.ui.components.KeylineScrolling
-import com.s0undplus.tv.ui.components.LanguageDialog
 import com.s0undplus.tv.ui.components.MediaRow
 import com.s0undplus.tv.ui.components.MessageState
 import com.s0undplus.tv.ui.components.OfflineChannelCard
@@ -77,13 +76,19 @@ import com.s0undplus.tv.ui.components.PagedGrid
 import com.s0undplus.tv.ui.components.PagedLoader
 import com.s0undplus.tv.ui.components.PillButton
 import com.s0undplus.tv.ui.components.PreviewController
+import com.s0undplus.tv.ui.components.RefreshButton
 import com.s0undplus.tv.ui.components.RowTitle
 import com.s0undplus.tv.ui.components.SkeletonBlock
 import com.s0undplus.tv.ui.components.Spinner
 import com.s0undplus.tv.ui.components.StreamCard
+import com.s0undplus.tv.ui.components.StreamFilterBar
+import com.s0undplus.tv.ui.components.StreamFilterSheets
 import com.s0undplus.tv.ui.components.TvTextField
 import com.s0undplus.tv.ui.components.describe
+import com.s0undplus.tv.ui.components.filterSummary
 import com.s0undplus.tv.ui.components.focusNotifier
+import com.s0undplus.tv.ui.components.rememberFilterBarState
+import com.s0undplus.tv.ui.components.tagSuggestions
 import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.tv.ui.settings.SettingsContent
 import com.s0undplus.tv.ui.theme.AppType
@@ -97,7 +102,8 @@ import com.s0undplus.twitch.Category
 import com.s0undplus.twitch.ChannelResult
 import com.s0undplus.twitch.FollowedChannel
 import com.s0undplus.twitch.Stream
-import com.s0undplus.twitch.TwitchLanguages
+import com.s0undplus.twitch.api.CategoryTag
+import com.s0undplus.twitch.api.StreamFilter
 import com.s0undplus.twitch.library.AppFollow
 import com.s0undplus.twitch.library.FavoriteChannel
 import com.s0undplus.twitch.library.FollowedCategory
@@ -112,6 +118,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -136,11 +143,25 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     val following = PagedLoader<Stream>(viewModelScope, { it.userId }) { c.helix.followedStreams(after = it) }
     val offline = PagedLoader<FollowedChannel>(viewModelScope, { it.login }) { c.helix.followedChannels(after = it) }
-    val live = PagedLoader<Stream>(viewModelScope, { it.userId }) { c.helix.streams(after = it) }
-    val language = PagedLoader<Stream>(viewModelScope, { it.userId }) { cursor ->
-        c.helix.streams(language = c.settings.settings.map { it.language }.first(), after = cursor)
+
+    /** Live's sort and filters, kept between launches (null until read from storage). */
+    val liveFilter: StateFlow<StreamFilter?> = c.settings.liveFilter.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val live = PagedLoader<Stream>(viewModelScope, { it.userId }) { cursor ->
+        c.browse.streams(liveFilter.filterNotNull().first(), cursor = cursor)
     }
-    val categories = PagedLoader<Category>(viewModelScope, { it.id }) { c.helix.topCategories(after = it) }
+
+    /** The game types ticked on Categories, kept between launches (null until read from storage). */
+    val categoryTypes: StateFlow<Set<String>?> = c.settings.categoryTypes.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val categories = PagedLoader<Category>(viewModelScope, { it.id }) { cursor ->
+        c.browse.categories(categoryTypes.filterNotNull().first(), cursor)
+    }
+    private val _categoryTypeList = MutableStateFlow<List<CategoryTag>>(emptyList())
+
+    /** Search's "Popular categories": every category, whatever the Categories page is narrowed to. */
+    val popular = PagedLoader<Category>(viewModelScope, { it.id }) { c.helix.topCategories(after = it) }
+
+    /** Every game type, the ones most browsed first. Empty until asked for (or if Twitch won't say). */
+    val categoryTypeList: StateFlow<List<CategoryTag>> = _categoryTypeList.asStateFlow()
 
     /** Scroll positions: grids by page, vertical lists by page, and each horizontal row by its own key. */
     val gridStates: Map<HomeTab, LazyGridState> = HomeTab.entries.associateWith { LazyGridState() }
@@ -228,10 +249,49 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
                     refreshExtraLive(it)
                 }
         }
-        // Changing the language (here or in Settings) reloads the Language page.
+        // A changed filter starts its list again from the top.
+        viewModelScope.launch { liveFilter.filterNotNull().drop(1).collect { restart(HomeTab.Live, live) } }
+        viewModelScope.launch { categoryTypes.filterNotNull().drop(1).collect { restart(HomeTab.Categories, categories) } }
+    }
+
+    private fun restart(tab: HomeTab, loader: PagedLoader<*>) {
+        focusedKeys.remove(tab)
+        gridStates.getValue(tab).takeIf { it.layoutInfo.totalItemsCount > 0 }?.let { viewModelScope.launch { it.scrollToItem(0) } }
+        loader.refresh()
+    }
+
+    fun setLiveFilter(filter: StreamFilter) {
+        viewModelScope.launch { c.settings.setLiveFilter(filter) }
+    }
+
+    fun toggleCategoryType(id: String) {
+        val now = categoryTypes.value ?: return
+        viewModelScope.launch { c.settings.setCategoryTypes(if (id in now) now - id else now + id) }
+    }
+
+    fun clearCategoryTypes() {
+        viewModelScope.launch { c.settings.setCategoryTypes(emptySet()) }
+    }
+
+    fun loadCategoryTypes() {
+        if (_categoryTypeList.value.isNotEmpty()) return
         viewModelScope.launch {
-            c.settings.settings.map { it.language }.distinctUntilChanged().drop(1).collect { language.refresh() }
+            try {
+                _categoryTypeList.value = commonTypesFirst(c.directory.categoryTags())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // no game types to offer; the page still lists every category
+            }
         }
+    }
+
+    /** The Refresh button on Following: everything again, now. */
+    fun refreshFollowingNow() {
+        following.refresh()
+        offline.refresh()
+        extraLogins?.let(::refreshExtraLive)
+        c.follows.refreshTwitch(force = true)
     }
 
     fun refreshFollowing() {
@@ -266,10 +326,6 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch { c.settings.removeHistory(videoId) }
     }
 
-    fun setLanguage(code: String) {
-        viewModelScope.launch { c.settings.update { it.copy(language = code) } }
-    }
-
     /** Back from a page's content: the next visit starts at its top, on its first card. */
     fun resetPlace(tab: HomeTab) {
         focusedKeys.remove(tab)
@@ -278,6 +334,11 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         gridStates.getValue(tab).takeIf { it.layoutInfo.totalItemsCount > 0 }?.let { viewModelScope.launch { it.scrollToItem(0) } }
         val lists = listOf(listStates.getValue(tab)) + rowStates.filterKeys { it.startsWith("${tab.name}/") }.values
         lists.filter { it.layoutInfo.totalItemsCount > 0 }.forEach { viewModelScope.launch { it.scrollToItem(0) } }
+    }
+
+    /** The Refresh button on Search: the same search again, or the popular categories when there isn't one. */
+    fun searchAgain() {
+        if (query.trim().length >= 2) onQueryChange(query) else popular.refresh()
     }
 
     fun onQueryChange(value: String) {
@@ -420,27 +481,13 @@ fun HomeScreen(
             Box(Modifier.weight(1f)) {
                 val focus = PageFocus(vm.tab, entryRequesters.getValue(vm.tab), vm)
                 when (vm.tab) {
-                    HomeTab.Following -> FollowingContent(vm, focus, preview, onOpenStream, onOpenChannel, onOpenCategory, onPlay, onEmpty = ::focusRail)
-                    HomeTab.Live -> StreamGridPage(
-                        vm, focus, vm.live, preview, onOpenStream, onOpenChannel,
-                        title = "Live",
-                        subtitle = "The most-watched streams on Twitch right now",
-                        emptyText = "No live streams found.",
+                    HomeTab.Following -> FollowingContent(
+                        vm, focus, preview, onOpenStream, onOpenChannel, onOpenCategory, onPlay,
+                        onEmpty = ::focusRail,
+                        clockShown = settings.showClock,
                     )
-                    HomeTab.Language -> LanguagePage(vm, focus, settings.language, preview, onOpenStream, onOpenChannel)
-                    HomeTab.Categories -> PagedGrid(
-                        loader = vm.categories,
-                        gridState = vm.gridStates.getValue(HomeTab.Categories),
-                        emptyText = "No categories found.",
-                        itemKey = { it.id },
-                        columns = 6,
-                        restoreFocusKey = focus.restoreKey,
-                        entryRequester = focus.entry,
-                        focusOnReady = { focus.shouldFocusNow().also { if (it) focus.done() } },
-                        onItemFocused = focus::remember,
-                        header = { PageHeader("Categories", "What people are watching, most viewers first") },
-                        contentType = "poster",
-                    ) { category, modifier -> CategoryPoster(category, { onOpenCategory(category) }, modifier) }
+                    HomeTab.Live -> LivePage(vm, focus, preview, onOpenStream, onOpenChannel)
+                    HomeTab.Categories -> CategoriesPage(vm, focus, onOpenCategory)
                     HomeTab.History -> HistoryContent(vm, focus, onPlay)
                     HomeTab.Search -> SearchContent(vm, focus, onOpenCategory, onOpenChannel)
                     HomeTab.Settings -> SettingsContent(updates, focus.entry, focusNow = { focus.shouldFocusNow().also { if (it) focus.done() } })
@@ -503,7 +550,7 @@ private fun StreamGridPage(
     title: String,
     subtitle: String,
     emptyText: String,
-    action: (@Composable () -> Unit)? = null,
+    controls: (@Composable () -> Unit)? = null,
 ) {
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val favoriteLogins = remember(favorites) { favorites.map { it.login.lowercase() }.toSet() }
@@ -516,7 +563,14 @@ private fun StreamGridPage(
         entryRequester = focus.entry,
         focusOnReady = { focus.shouldFocusNow().also { if (it) focus.done() } },
         onItemFocused = focus::remember,
-        header = { PageHeader(title, "$subtitle  ·  Hold OK on a stream for its channel", action = action) },
+        // Below the header and its filters, so a focused first line never scrolls them away.
+        keyline = 196.dp,
+        header = {
+            Column {
+                PageHeader(title, "$subtitle  ·  Hold OK on a stream for its channel")
+                if (controls != null) controls()
+            }
+        },
     ) { stream, modifier ->
         StreamCard(
             stream = stream,
@@ -529,38 +583,96 @@ private fun StreamGridPage(
     }
 }
 
+/** Live: every live stream on Twitch, sorted and filtered the viewer's way (kept between launches). */
 @Composable
-private fun LanguagePage(
+private fun LivePage(
     vm: HomeViewModel,
     focus: PageFocus,
-    language: String,
     preview: PreviewController?,
     onOpenStream: (Stream) -> Unit,
     onOpenChannel: (String) -> Unit,
 ) {
-    var picking by remember { mutableStateOf(false) }
-    val button = remember { FocusRequester() }
-    val name = TwitchLanguages.name(language)
-    StreamGridPage(
-        vm, focus, vm.language, preview, onOpenStream, onOpenChannel,
-        title = "Live in $name",
-        subtitle = "The most-watched streams in $name",
-        emptyText = "Nobody is streaming in this language right now.",
-        action = { PillButton("Change language", { picking = true }, Modifier.focusRequester(button), icon = Icons.Rounded.Translate) },
-    )
-    if (picking) {
-        LanguageDialog(
-            current = language,
-            title = "Language",
-            onPick = {
-                picking = false
-                vm.setLanguage(it)
+    val filter = vm.liveFilter.collectAsStateWithLifecycle().value ?: StreamFilter()
+    val state by vm.live.state.collectAsStateWithLifecycle()
+    val bar = rememberFilterBarState()
+    val suggestions = remember(state.items) { tagSuggestions(state.items) }
+    val nothing = state.items.isEmpty() && (state.loadedAtMillis != 0L || state.error != null)
+    EnterControlsWhenEmpty(focus, nothing)
+    Box(Modifier.fillMaxSize()) {
+        StreamGridPage(
+            vm, focus, vm.live, preview, onOpenStream, onOpenChannel,
+            title = "Live",
+            subtitle = filterSummary(filter),
+            emptyText = "No live streams match these filters.",
+            controls = {
+                // With nothing listed, the controls are where the page is entered (to change what didn't match).
+                StreamFilterBar(bar, filter, vm.live::refresh, Modifier.padding(top = 8.dp, bottom = 4.dp), entry = focus.entry.takeIf { nothing })
             },
-            onDismiss = { picking = false },
-            returnFocus = button,
         )
+        StreamFilterSheets(bar, filter, suggestions, vm::setLiveFilter)
     }
 }
+
+/** Categories by viewers, narrowed to the game types ticked along the top. */
+@Composable
+private fun CategoriesPage(vm: HomeViewModel, focus: PageFocus, onOpenCategory: (Category) -> Unit) {
+    val selected = vm.categoryTypes.collectAsStateWithLifecycle().value.orEmpty()
+    val types by vm.categoryTypeList.collectAsStateWithLifecycle()
+    val state by vm.categories.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.loadCategoryTypes() }
+    val nothing = state.items.isEmpty() && (state.loadedAtMillis != 0L || state.error != null)
+    EnterControlsWhenEmpty(focus, nothing)
+    val names = types.filter { it.id in selected }.map { it.name }
+    PagedGrid(
+        loader = vm.categories,
+        gridState = vm.gridStates.getValue(HomeTab.Categories),
+        emptyText = if (selected.isEmpty()) "No categories found." else "No category is filed under all of these types.",
+        itemKey = { it.id },
+        columns = 6,
+        restoreFocusKey = focus.restoreKey,
+        entryRequester = focus.entry,
+        focusOnReady = { focus.shouldFocusNow().also { if (it) focus.done() } },
+        onItemFocused = focus::remember,
+        keyline = 196.dp,
+        header = {
+            Column {
+                PageHeader(
+                    "Categories",
+                    if (names.isEmpty()) "What people are watching, most viewers first" else "${names.joinToString(" + ")}  ·  most viewers first",
+                )
+                CategoryTypeBar(
+                    types, selected, vm::toggleCategoryType, vm::clearCategoryTypes, vm.categories::refresh,
+                    Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    entry = focus.entry.takeIf { nothing },
+                )
+            }
+        },
+        contentType = "poster",
+    ) { category, modifier -> CategoryPoster(category, { onOpenCategory(category) }, modifier) }
+}
+
+/**
+ * A page whose list came back empty (or failed) has no card to enter on: its controls take [PageFocus.entry]
+ * instead, and focus goes there when it should have gone to a card.
+ */
+@Composable
+private fun EnterControlsWhenEmpty(focus: PageFocus, nothing: Boolean) {
+    LaunchedEffect(nothing) {
+        if (nothing && focus.shouldFocusNow() && focusSoon(focus.entry)) focus.done()
+    }
+}
+
+/** Game types people browse most, in that order, then the rest alphabetically. */
+private fun commonTypesFirst(tags: List<CategoryTag>): List<CategoryTag> {
+    val rank = COMMON_TYPES.withIndex().associate { (i, name) -> name.lowercase() to i }
+    return tags.sortedWith(compareBy({ rank[it.name.lowercase()] ?: Int.MAX_VALUE }, { it.name.lowercase() }))
+}
+
+private val COMMON_TYPES = listOf(
+    "IRL", "Shooter", "FPS", "RPG", "MOBA", "Strategy", "Survival", "Horror", "Action", "Adventure Game", "MMO",
+    "Open World", "Simulation", "Sports Game", "Driving/Racing Game", "Fighting", "Party", "Creative", "Card & Board Game",
+    "Puzzle", "Platformer", "Roguelike", "Indie Game",
+)
 
 /** Following: a hero describing the focused card, over rows of favourites, who is live, what to resume, and the rest. */
 @Composable
@@ -573,6 +685,7 @@ private fun FollowingContent(
     onOpenCategory: (Category) -> Unit,
     onPlay: (PlayTarget) -> Unit,
     onEmpty: () -> Unit,
+    clockShown: Boolean,
 ) {
     val live by vm.following.state.collectAsStateWithLifecycle()
     val offline by vm.offline.state.collectAsStateWithLifecycle()
@@ -710,6 +823,11 @@ private fun FollowingContent(
 
     Box(Modifier.fillMaxSize()) {
         HeroBackdrop(hero, Modifier.align(Alignment.TopEnd))
+        // Following has no title row for it: refresh sits at the top right, beside the clock. Up from the top row.
+        RefreshButton(
+            vm::refreshFollowingNow,
+            Modifier.align(Alignment.TopEnd).padding(top = 16.dp, end = Layout.endMargin + if (clockShown) 96.dp else 0.dp),
+        )
         Column(Modifier.fillMaxSize()) {
             HeroInfo(hero)
             KeylineScrolling(FOLLOWING_ROW_KEYLINE) {
@@ -912,9 +1030,9 @@ private fun HistoryContent(vm: HomeViewModel, focus: PageFocus, onPlay: (PlayTar
 @Composable
 private fun SearchContent(vm: HomeViewModel, focus: PageFocus, onOpenCategory: (Category) -> Unit, onOpenChannel: (String) -> Unit) {
     val state by vm.search.collectAsStateWithLifecycle()
-    val popular by vm.categories.state.collectAsStateWithLifecycle()
+    val popular by vm.popular.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
-        vm.categories.ensureFresh(10 * 60_000L)
+        vm.popular.ensureFresh(10 * 60_000L)
         if (focus.shouldFocusNow()) {
             focusSoon(focus.entry)
             focus.done()
@@ -935,16 +1053,23 @@ private fun SearchContent(vm: HomeViewModel, focus: PageFocus, onOpenCategory: (
         .focusNotifier { focus.remember(key) }
 
     Column(Modifier.fillMaxSize()) {
-        TvTextField(
-            value = vm.query,
-            onValueChange = vm::onQueryChange,
-            hint = "Search channels and categories",
-            imeAction = ImeAction.Search,
-            leadingIcon = Icons.Rounded.Search,
-            modifier = Modifier
-                .padding(start = Layout.keyline, end = 160.dp, top = 32.dp, bottom = 8.dp)
-                .let { if (entryKey == null) it.focusRequester(focus.entry) else it },
-        )
+        Row(
+            Modifier.padding(start = Layout.keyline, end = 160.dp, top = 32.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            TvTextField(
+                value = vm.query,
+                onValueChange = vm::onQueryChange,
+                hint = "Search channels and categories",
+                imeAction = ImeAction.Search,
+                leadingIcon = Icons.Rounded.Search,
+                modifier = Modifier
+                    .weight(1f)
+                    .let { if (entryKey == null) it.focusRequester(focus.entry) else it },
+            )
+            RefreshButton(vm::searchAgain)
+        }
         KeylineScrolling(FOLLOWING_ROW_KEYLINE) {
             LazyColumn(
                 state = vm.listStates.getValue(HomeTab.Search),

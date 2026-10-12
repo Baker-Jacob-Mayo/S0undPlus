@@ -23,15 +23,15 @@ class ModelsTest {
     @Test
     fun searchBoxArtOfAFixedSizeBecomesATemplate() {
         val fixed = "https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-52x72.jpg"
-        assertEquals("https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-{width}x{height}.jpg", boxArtTemplate(fixed))
-        assertEquals("https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-144x192.jpg", boxArtTemplate(fixed).sized(144, 192))
+        assertEquals("https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-{width}x{height}.jpg", sizeTemplate(fixed))
+        assertEquals("https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-144x192.jpg", sizeTemplate(fixed).sized(144, 192))
     }
 
     @Test
     fun aBoxArtTemplateAndAnEmptyUrlAreLeftAlone() {
         val template = "https://static-cdn.jtvnw.net/ttv-boxart/509658-{width}x{height}.jpg"
-        assertEquals(template, boxArtTemplate(template))
-        assertEquals("", boxArtTemplate(""))
+        assertEquals(template, sizeTemplate(template))
+        assertEquals("", sizeTemplate(""))
     }
 
     @Test

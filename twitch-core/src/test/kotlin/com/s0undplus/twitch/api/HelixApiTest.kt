@@ -77,6 +77,13 @@ class HelixApiTest {
     }
 
     @Test
+    fun streamsInSeveralLanguagesRepeatTheLanguageParameter() = runTest {
+        server.enqueue(json("""{"data":[],"pagination":{}}"""))
+        helix.streams(languages = setOf("en", "da"))
+        assertEquals(listOf("da", "en"), server.takeRequest().url.queryParameterValues("language"))
+    }
+
+    @Test
     fun unauthorizedTriggersOneRefreshAndRetry() = runTest {
         server.enqueue(json("""{"status":401,"message":"Invalid OAuth token"}""", 401))
         server.enqueue(json("""{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}"""))

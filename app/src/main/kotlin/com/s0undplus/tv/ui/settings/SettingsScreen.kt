@@ -12,7 +12,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import com.s0undplus.tv.ui.components.KeylineScrolling
-import com.s0undplus.tv.ui.components.LanguageDialog
 import com.s0undplus.tv.ui.components.ListRowSurface
 import com.s0undplus.tv.ui.theme.AppType
 import com.s0undplus.tv.ui.theme.Layout
@@ -74,7 +73,6 @@ import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.update.UpdateUi
 import com.s0undplus.tv.ui.update.UpdateViewModel
 import com.s0undplus.tv.ui.update.statusLabel
-import com.s0undplus.twitch.TwitchLanguages
 import com.s0undplus.twitch.playback.PlayerTypes
 import com.s0undplus.twitch.playback.ProxyDefaults
 import com.s0undplus.twitch.playback.ProxyEntry
@@ -130,7 +128,6 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
     // round-trips. [seed] is what they are seeded from; "Reset" refreshes it and rebuilds the fields.
     var seed by remember { mutableStateOf(loaded) }
     var resetCount by remember { mutableIntStateOf(0) }
-    var showLanguages by remember { mutableStateOf(false) }
     var newProxy by remember { mutableStateOf("") }
     var proxyError by remember { mutableStateOf<String?>(null) }
     var proxyStatus by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
@@ -177,7 +174,6 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
     }
 
     val pane = remember { PaneState() }
-    val languageRow = remember { FocusRequester() }
     val listState = rememberLazyListState()
     LaunchedEffect(Unit) {
         if (focusNow()) {
@@ -219,16 +215,6 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
                 CycleRow("Theme", s.theme, AppTheme.entries, { it.label }, Modifier.focusRequester(entry)) { v -> update { it.copy(theme = v) } }
             }
             item { ToggleRow("Show clock", s.showClock) { v -> update { it.copy(showClock = v) } } }
-            item {
-                ValueRow(
-                    "Language row",
-                    TwitchLanguages.name(s.language),
-                    Modifier.focusRequester(languageRow),
-                    help = "The language of the streams on the Language page.",
-                ) {
-                    showLanguages = true
-                }
-            }
 
             item(key = "h:Chat") { Header("Chat") }
             item { ToggleRow("Show chat by default", s.chatVisible) { v -> update { it.copy(chatVisible = v) } } }
@@ -494,8 +480,9 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
                 Text(
                     "S0undPlus ${BuildConfig.VERSION_NAME}. An unofficial, independent Twitch viewer for Google TV. " +
                         "Not affiliated with or endorsed by Twitch Interactive, Inc. Chat is read-only and anonymous. " +
-                        "Twitch doesn't allow third-party apps to follow or unfollow channels, so use twitch.tv or the " +
-                        "official app for that (the channel page has a QR code).",
+                        "Twitch doesn't let third-party apps follow channels on your account, so follows made here stay " +
+                        "in this app; to follow on Twitch itself, use twitch.tv or the official app (the channel page has a " +
+                        "QR code).",
                     style = AppType.BodyM,
                     color = Palette.Muted,
                     modifier = Modifier.padding(horizontal = 20.dp),
@@ -503,19 +490,6 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
             }
             }
           }
-        }
-    }
-    Box {
-        if (showLanguages) {
-            LanguageDialog(
-                current = s.language,
-                onPick = { code ->
-                    showLanguages = false
-                    update { it.copy(language = code) }
-                },
-                onDismiss = { showLanguages = false },
-                returnFocus = languageRow,
-            )
         }
     }
 }

@@ -28,6 +28,11 @@ data class TwitchConfig(
      * this one (the ID chat-download tools use) pages normally. The replay also falls back to paging by time if refused.
      */
     val commentsClientId: String = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp",
+    /**
+     * Client ID for the browse directory (sorted and filtered stream and category lists). The web one gets the first page
+     * and then "failed integrity check" for every next one (seen 2026-10-12); this one pages normally.
+     */
+    val directoryClientId: String = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp",
     val ircUrl: String = "wss://irc-ws.chat.twitch.tv:443",
     val eventSubUrl: String = "wss://eventsub.wss.twitch.tv/ws",
     val recentMessagesUrl: String = "https://recent-messages.robotty.de/api/v2/recent-messages",
