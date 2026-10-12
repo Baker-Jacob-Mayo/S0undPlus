@@ -226,6 +226,7 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     var showFollowQr by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
+    val followButton = remember { FocusRequester() }
     val restoreFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { controller.retryOrRefresh() }
     // A fresh visit starts on "Watch live" (or Favorite when offline); coming back, on the video that was played.
@@ -279,6 +280,7 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                             },
                             onFollowQr = { showFollowQr = true },
                             firstFocus = firstFocus,
+                            followButton = followButton,
                         )
                       }
                     }
@@ -315,6 +317,7 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                         "then tap Follow — it will show up in your Following page.",
                     url = "https://www.twitch.tv/${s.user.login}",
                     onDismiss = { showFollowQr = false },
+                    returnFocus = followButton,
                 )
             }
         }
@@ -360,6 +363,7 @@ private fun ChannelHeader(
     onFavorite: () -> Unit,
     onFollowQr: () -> Unit,
     firstFocus: FocusRequester,
+    followButton: FocusRequester,
 ) {
     Column(
         Modifier.fillMaxWidth().padding(start = Layout.keyline, top = 48.dp, end = Layout.endMargin),
@@ -413,7 +417,7 @@ private fun ChannelHeader(
                 selected = isFavorite,
                 icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
             )
-            PillButton("Follow on Twitch", onFollowQr, icon = Icons.Rounded.QrCode2)
+            PillButton("Follow on Twitch", onFollowQr, Modifier.focusRequester(followButton), icon = Icons.Rounded.QrCode2)
         }
     }
 }

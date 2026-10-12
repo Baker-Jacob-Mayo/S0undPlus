@@ -503,13 +503,14 @@ private fun LanguagePage(
     onOpenChannel: (String) -> Unit,
 ) {
     var picking by remember { mutableStateOf(false) }
+    val button = remember { FocusRequester() }
     val name = TwitchLanguages.name(language)
     StreamGridPage(
         vm, focus, vm.language, preview, onOpenStream, onOpenChannel,
         title = "Live in $name",
         subtitle = "The most-watched streams in $name",
         emptyText = "Nobody is streaming in this language right now.",
-        action = { PillButton("Change language", { picking = true }, icon = Icons.Rounded.Translate) },
+        action = { PillButton("Change language", { picking = true }, Modifier.focusRequester(button), icon = Icons.Rounded.Translate) },
     )
     if (picking) {
         LanguageDialog(
@@ -520,6 +521,7 @@ private fun LanguagePage(
                 vm.setLanguage(it)
             },
             onDismiss = { picking = false },
+            returnFocus = button,
         )
     }
 }

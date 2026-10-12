@@ -916,7 +916,9 @@ fun PlayerScreen(
                 title = "Chat from your phone",
                 subtitle = "S0undPlus chat is read-only. Scan to open this channel's chat on your phone and join in.",
                 url = "https://www.twitch.tv/popout/$channelLogin/chat?popout=",
+                // Back to the video, where the player's own key handling takes over again.
                 onDismiss = { showChatQr = false },
+                returnFocus = rootFocus,
             )
         }
     }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -40,7 +41,8 @@ import com.s0undplus.twitch.TwitchLanguages
 
 /**
  * A dialog panel over a dimmed page. The D-pad cannot wander out of it to the page behind, and Back closes it.
- * [initialFocus] is focused when it opens.
+ * [initialFocus] is focused when it opens. The dialog belongs to the screen beside it: when it closes, focus would be
+ * left with nothing, so it is handed back to [returnFocus] (the control that opened it) if given.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -48,9 +50,21 @@ fun DialogFrame(
     onDismiss: () -> Unit,
     initialFocus: FocusRequester,
     modifier: Modifier = Modifier,
+    returnFocus: FocusRequester? = null,
     content: @Composable () -> Unit,
 ) {
     BackHandler(onBack = onDismiss)
+    if (returnFocus != null) {
+        DisposableEffect(Unit) {
+            onDispose {
+                try {
+                    returnFocus.requestFocus()
+                } catch (_: IllegalStateException) {
+                    // the opener is gone too; nothing to return to
+                }
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         try {
             initialFocus.requestFocus()
@@ -72,10 +86,16 @@ fun DialogFrame(
 
 /** Every broadcast language in one list, with the current one ticked and focused, instead of cycling through them. */
 @Composable
-fun LanguageDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> Unit, title: String = "Language row") {
+fun LanguageDialog(
+    current: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+    title: String = "Language row",
+    returnFocus: FocusRequester? = null,
+) {
     val focus = remember { FocusRequester() }
     val listState = rememberLazyListState(TwitchLanguages.ALL.indexOfFirst { it.first == current }.coerceAtLeast(0))
-    DialogFrame(onDismiss, focus, Modifier.testTag("languageDialog").width(420.dp).heightIn(max = 460.dp)) {
+    DialogFrame(onDismiss, focus, Modifier.testTag("languageDialog").width(420.dp).heightIn(max = 460.dp), returnFocus) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(title, style = AppType.TitleL, color = Palette.OnBackground)
             LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -107,9 +127,9 @@ fun LanguageDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> U
 
 /** A QR code to scan with a phone, with what it is for. Back or Close dismisses it. */
 @Composable
-fun QrDialog(title: String, subtitle: String, url: String, onDismiss: () -> Unit) {
+fun QrDialog(title: String, subtitle: String, url: String, onDismiss: () -> Unit, returnFocus: FocusRequester? = null) {
     val focus = remember { FocusRequester() }
-    DialogFrame(onDismiss, focus, Modifier.width(640.dp)) {
+    DialogFrame(onDismiss, focus, Modifier.width(640.dp), returnFocus) {
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
             QrImage(url, Modifier.size(232.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {

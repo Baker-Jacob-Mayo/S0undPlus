@@ -177,6 +177,7 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
     }
 
     val pane = remember { PaneState() }
+    val languageRow = remember { FocusRequester() }
     val listState = rememberLazyListState()
     LaunchedEffect(Unit) {
         if (focusNow()) {
@@ -219,7 +220,12 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
             }
             item { ToggleRow("Show clock", s.showClock) { v -> update { it.copy(showClock = v) } } }
             item {
-                ValueRow("Language row", TwitchLanguages.name(s.language), help = "The language of the streams on the Language page.") {
+                ValueRow(
+                    "Language row",
+                    TwitchLanguages.name(s.language),
+                    Modifier.focusRequester(languageRow),
+                    help = "The language of the streams on the Language page.",
+                ) {
                     showLanguages = true
                 }
             }
@@ -508,6 +514,7 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: F
                     update { it.copy(language = code) }
                 },
                 onDismiss = { showLanguages = false },
+                returnFocus = languageRow,
             )
         }
     }
