@@ -1,5 +1,27 @@
 package com.s0undplus.tv.ui.player
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
+import androidx.compose.material.icons.rounded.QrCode2
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.tv.material3.Icon
+import com.s0undplus.tv.ui.theme.AppType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -112,6 +134,89 @@ internal fun PeekPanel(
     }
 }
 
+/** The panel the player's menus open in: down the right edge, opaque (it opens over chat), the D-pad kept inside. */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun SidePanel(title: String, modifier: Modifier, content: @Composable () -> Unit) {
+    Column(
+        modifier
+            .fillMaxHeight()
+            .width(340.dp)
+            .background(Color(0xF7141319))
+            // Arrow keys stay in the panel; Back closes it.
+            .focusProperties {
+                exit = { direction ->
+                    if (direction == FocusDirection.Left || direction == FocusDirection.Right ||
+                        direction == FocusDirection.Up || direction == FocusDirection.Down
+                    ) {
+                        FocusRequester.Cancel
+                    } else {
+                        FocusRequester.Default
+                    }
+                }
+            }
+            .focusGroup()
+            .padding(horizontal = 20.dp, vertical = 36.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(title, style = AppType.TitleL, color = Color.White, modifier = Modifier.padding(start = 14.dp, bottom = 12.dp))
+        content()
+    }
+}
+
+/** A row in a player panel: white with dark text when focused, the way the controls mark focus. */
+@Composable
+private fun PanelRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    value: String? = null,
+    checked: Boolean = false,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .background(if (focused) Color.White else Color.Transparent, RoundedCornerShape(10.dp))
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        val ink = if (focused) Color(0xFF111114) else Color.White
+        if (icon != null) Icon(icon, contentDescription = null, tint = if (focused) Color(0xFF4A4655) else Color(0xFFCFCBD8), modifier = Modifier.size(22.dp))
+        Text(label, style = AppType.BodyL, color = ink, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (value != null) Text(value, style = AppType.BodyM, color = if (focused) Color(0xFF4A4655) else Palette.BrandSoft, maxLines = 1)
+        if (checked) Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = if (focused) Color(0xFF111114) else Palette.BrandSoft, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** What the Options button opens: everything that isn't on the controls' main row. */
+@Composable
+internal fun OptionsSheet(
+    qualityLabel: String,
+    audioOnly: Boolean,
+    zoom: Boolean,
+    pipSupported: Boolean,
+    firstItem: FocusRequester,
+    onQuality: () -> Unit,
+    onAudioOnly: () -> Unit,
+    onZoom: () -> Unit,
+    onPip: () -> Unit,
+    onChatOnPhone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SidePanel("Options", modifier) {
+        PanelRow("Quality", onQuality, Modifier.focusRequester(firstItem), Icons.Rounded.HighQuality, value = qualityLabel)
+        PanelRow("Audio only", onAudioOnly, icon = Icons.Rounded.Headphones, value = if (audioOnly) "On" else "Off")
+        PanelRow("Picture", onZoom, icon = Icons.Rounded.AspectRatio, value = if (zoom) "Fill" else "Fit")
+        if (pipSupported) PanelRow("Picture-in-picture", onPip, icon = Icons.Rounded.PictureInPictureAlt)
+        PanelRow("Chat on your phone", onChatOnPhone, icon = Icons.Rounded.QrCode2)
+    }
+}
+
 @Composable
 internal fun QualityMenu(
     variants: List<Variant>,
@@ -120,32 +225,13 @@ internal fun QualityMenu(
     onPick: (Variant?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier
-            .fillMaxHeight()
-            .width(320.dp)
-            // Opaque: it opens over the chat, and chat text showing through made the options hard to read.
-            .background(Palette.Background)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
-    ) {
-        Text("Quality", style = MaterialTheme.typography.titleLarge, color = Palette.OnBackground)
+    SidePanel("Quality", modifier) {
         // Focus goes to the ticked row, or to Auto when nothing matches (audio-only, or a rung that is no longer offered).
         val matched = variants.any { it.name == current }
-        QualityRow("Auto", current == "Auto", { onPick(null) }, if (!matched) Modifier.focusRequester(selectedItem) else Modifier)
+        PanelRow("Auto", { onPick(null) }, if (!matched) Modifier.focusRequester(selectedItem) else Modifier, checked = current == "Auto")
         for (v in variants) {
             val selected = current == v.name
-            QualityRow(v.name, selected, { onPick(v) }, if (selected) Modifier.focusRequester(selectedItem) else Modifier)
-        }
-    }
-}
-
-@Composable
-internal fun QualityRow(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    FocusSurface(onClick, modifier.fillMaxWidth(), focusedScale = 1.03f) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
-            if (selected) Text("✓", style = MaterialTheme.typography.titleSmall, color = Palette.BrandSoft)
+            PanelRow(v.name, { onPick(v) }, if (selected) Modifier.focusRequester(selectedItem) else Modifier, checked = selected)
         }
     }
 }

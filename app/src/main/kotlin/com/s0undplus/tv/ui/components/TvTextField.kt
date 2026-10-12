@@ -1,5 +1,8 @@
 package com.s0undplus.tv.ui.components
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.tv.material3.Icon
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,6 +52,7 @@ fun TvTextField(
     modifier: Modifier = Modifier,
     imeAction: ImeAction = ImeAction.Done,
     onSubmit: () -> Unit = {},
+    leadingIcon: ImageVector? = null,
 ) {
     var editing by remember { mutableStateOf(false) }
     // Set when editing ends so that focus comes back to the row, instead of being lost with the editor that had it.
@@ -75,13 +79,13 @@ fun TvTextField(
                 onFocusLost = { editing = false },
             )
         } else {
-            FieldRow(value, hint, returnFocus = returnFocusToRow, onFocusReturned = { returnFocusToRow = false }) { editing = true }
+            FieldRow(value, hint, leadingIcon, returnFocus = returnFocusToRow, onFocusReturned = { returnFocusToRow = false }) { editing = true }
         }
     }
 }
 
 @Composable
-private fun FieldRow(value: String, hint: String, returnFocus: Boolean, onFocusReturned: () -> Unit, onEdit: () -> Unit) {
+private fun FieldRow(value: String, hint: String, icon: ImageVector?, returnFocus: Boolean, onFocusReturned: () -> Unit, onEdit: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(returnFocus) {
         if (returnFocus) {
@@ -93,14 +97,28 @@ private fun FieldRow(value: String, hint: String, returnFocus: Boolean, onFocusR
             onFocusReturned()
         }
     }
-    FocusSurface(onClick = onEdit, modifier = Modifier.fillMaxWidth().focusRequester(focus), focusedScale = 1f) {
+    // Like every list row: grey until focused, then white with dark text. OK starts typing.
+    ListRowSurface(onClick = onEdit, modifier = Modifier.fillMaxWidth().focusRequester(focus), container = Palette.Surface) { focused ->
+        if (icon != null) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (focused) Palette.OnFocusFill else Palette.Muted,
+                modifier = Modifier.padding(start = 18.dp).size(24.dp),
+            )
+        }
         Text(
             value.ifEmpty { hint },
-            style = MaterialTheme.typography.titleMedium.copy(fontSize = 22.sp),
-            color = if (value.isEmpty()) Palette.Muted else Palette.OnBackground,
+            style = FIELD_TEXT,
+            color = when {
+                focused && value.isEmpty() -> Palette.OnFocusFillSecondary
+                focused -> Palette.OnFocusFill
+                value.isEmpty() -> Palette.Muted
+                else -> Palette.OnBackground
+            },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            modifier = Modifier.padding(horizontal = if (icon != null) 14.dp else 20.dp, vertical = 14.dp),
         )
     }
 }
@@ -142,7 +160,7 @@ private fun Editor(
             if (it.text != value) onValueChange(it.text)
         },
         singleLine = true,
-        textStyle = TextStyle(color = Palette.OnBackground, fontSize = 22.sp),
+        textStyle = FIELD_TEXT.copy(color = Palette.OnBackground),
         cursorBrush = SolidColor(Palette.Brand),
         keyboardOptions = KeyboardOptions(imeAction = imeAction),
         keyboardActions = KeyboardActions(
@@ -166,14 +184,16 @@ private fun Editor(
                 Modifier
                     .fillMaxWidth()
                     .background(Palette.SurfaceFocused, shape)
-                    .border(3.dp, Palette.Brand, shape)
+                    .border(2.dp, Palette.Brand, shape)
                     .padding(horizontal = 20.dp, vertical = 14.dp),
             ) {
                 if (value.isEmpty()) {
-                    Text(hint, style = MaterialTheme.typography.titleMedium.copy(fontSize = 22.sp), color = Palette.Muted)
+                    Text(hint, style = FIELD_TEXT, color = Palette.Muted)
                 }
                 inner()
             }
         },
     )
 }
+
+private val FIELD_TEXT = TextStyle(fontSize = 18.sp, lineHeight = 24.sp)

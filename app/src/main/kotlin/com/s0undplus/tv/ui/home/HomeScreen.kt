@@ -2,71 +2,93 @@ package com.s0undplus.tv.ui.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.s0undplus.tv.AppContainer
 import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.data.AppSettings
-import com.s0undplus.tv.ui.components.CategoryCard
-import com.s0undplus.tv.ui.components.ChannelCard
+import com.s0undplus.tv.ui.components.AvatarTile
+import com.s0undplus.tv.ui.components.CategoryPoster
 import com.s0undplus.tv.ui.components.ClockText
-import com.s0undplus.tv.ui.components.FocusRestorer
+import com.s0undplus.tv.ui.components.HeroBackdrop
+import com.s0undplus.tv.ui.components.HeroInfo
+import com.s0undplus.tv.ui.components.HeroModel
+import com.s0undplus.tv.ui.components.HeroState
 import com.s0undplus.tv.ui.components.HistoryCard
-import com.s0undplus.tv.ui.components.LoadMoreEffect
-import com.s0undplus.tv.ui.components.LoadingState
+import com.s0undplus.tv.ui.components.KeylineScrolling
+import com.s0undplus.tv.ui.components.LanguageDialog
+import com.s0undplus.tv.ui.components.MediaRow
 import com.s0undplus.tv.ui.components.MessageState
+import com.s0undplus.tv.ui.components.OfflineChannelCard
 import com.s0undplus.tv.ui.components.PagedGrid
 import com.s0undplus.tv.ui.components.PagedLoader
 import com.s0undplus.tv.ui.components.PillButton
 import com.s0undplus.tv.ui.components.PreviewController
+import com.s0undplus.tv.ui.components.RowTitle
+import com.s0undplus.tv.ui.components.SkeletonBlock
+import com.s0undplus.tv.ui.components.Spinner
 import com.s0undplus.tv.ui.components.StreamCard
 import com.s0undplus.tv.ui.components.TvTextField
 import com.s0undplus.tv.ui.components.describe
 import com.s0undplus.tv.ui.components.focusNotifier
 import com.s0undplus.tv.ui.nav.PlayTarget
 import com.s0undplus.tv.ui.settings.SettingsContent
+import com.s0undplus.tv.ui.theme.AppType
+import com.s0undplus.tv.ui.theme.Layout
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.update.UpdateBanner
+import com.s0undplus.tv.ui.update.UpdateUi
 import com.s0undplus.tv.ui.update.UpdateViewModel
 import com.s0undplus.tv.ui.util.rememberScreenScope
 import com.s0undplus.twitch.Category
@@ -90,16 +112,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-enum class HomeTab(val label: String) {
-    Following("Following"),
-    Live("Live"),
-    Language("Language"),
-    Categories("Categories"),
-    History("History"),
-    Search("Search"),
-    Settings("Settings"),
-}
-
 sealed interface SearchState {
     data object Idle : SearchState
     data object Loading : SearchState
@@ -107,9 +119,12 @@ sealed interface SearchState {
     data class Failed(val message: String) : SearchState
 }
 
+/** What the hero needs about a channel beyond the follow list: its picture and its description. */
+data class Profile(val avatarUrl: String, val description: String)
+
 /**
- * Home lives in an Activity-scoped ViewModel so everything the viewer did here — the selected tab, loaded pages,
- * scroll positions and the card they last focused — is still there after watching a stream and pressing Back.
+ * Home lives in an Activity-scoped ViewModel so everything the viewer did here — the open page, loaded lists, every
+ * scroll position and the card they last focused — is still there after watching a stream and pressing Back.
  */
 class HomeViewModel(private val c: AppContainer) : ViewModel() {
     var tab by mutableStateOf(HomeTab.Following)
@@ -122,8 +137,25 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     }
     val categories = PagedLoader<Category>(viewModelScope, { it.id }) { c.helix.topCategories(after = it) }
 
+    /** Scroll positions: grids by page, vertical lists by page, and each horizontal row by its own key. */
     val gridStates: Map<HomeTab, LazyGridState> = HomeTab.entries.associateWith { LazyGridState() }
+    val listStates: Map<HomeTab, LazyListState> = HomeTab.entries.associateWith { LazyListState() }
+    private val rowStates = HashMap<String, LazyListState>()
+    fun rowState(key: String): LazyListState = rowStates.getOrPut(key) { LazyListState() }
+
+    /** The card each page last had focused, by that card's key. */
     val focusedKeys = mutableMapOf<HomeTab, Any>()
+
+    /** Set while another screen covers Home, so that coming back puts focus back on the card that was opened. */
+    var returning = false
+
+    /** At launch, focus goes to the first card once it arrives, unless the viewer has pressed a key by then. */
+    var launchFocusPending = true
+
+    /** A page opened from the navigation before its cards arrived: they take focus when they come. */
+    var pendingEnter by mutableStateOf<HomeTab?>(null)
+
+    val hero = HeroState()
 
     val favorites: StateFlow<List<FavoriteChannel>> =
         c.settings.favorites.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -135,24 +167,25 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     /** Favorites that are live right now, by lowercase login. */
     val favoriteStreams: StateFlow<Map<String, Stream>> = _favoriteStreams.asStateFlow()
 
-    private val _avatars = MutableStateFlow<Map<String, String>>(emptyMap())
-    private val avatarsRequested = HashSet<String>()
+    private val _profiles = MutableStateFlow<Map<String, Profile>>(emptyMap())
+    private val profilesRequested = HashSet<String>()
 
-    /** Profile pictures by user id, for channel cards (the followed-channels list itself has none). */
-    val avatars: StateFlow<Map<String, String>> = _avatars.asStateFlow()
+    /** Profile pictures and descriptions by user id (the follow and stream lists carry neither). */
+    val profiles: StateFlow<Map<String, Profile>> = _profiles.asStateFlow()
 
-    /** Looks up the profile pictures of [ids] not asked for yet, 100 per request, once each. */
-    fun loadAvatars(ids: List<String>) {
-        val missing = ids.filter { it.isNotEmpty() && avatarsRequested.add(it) }
+    /** Looks up the profiles of [ids] not asked for yet, 100 per request, once each. */
+    fun loadProfiles(ids: List<String>) {
+        val missing = ids.filter { it.isNotEmpty() && profilesRequested.add(it) }
         if (missing.isEmpty()) return
         viewModelScope.launch {
             try {
-                val found = c.helix.usersById(missing).associate { it.id to it.profileImageUrl }
-                _avatars.value = _avatars.value + found.filterValues { it.isNotEmpty() }
+                val found = missing.chunked(100).flatMap { c.helix.usersById(it) }
+                    .associate { it.id to Profile(it.profileImageUrl, it.description) }
+                _profiles.value = _profiles.value + found
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                avatarsRequested.removeAll(missing.toSet()) // try again next time the list shows
+                profilesRequested.removeAll(missing.toSet()) // try again next time the list shows
             }
         }
     }
@@ -165,7 +198,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch { favorites.collect { refreshFavoriteStatus(it) } }
-        // Changing the language in Settings reloads the Language row.
+        // Changing the language (here or in Settings) reloads the Language page.
         viewModelScope.launch {
             c.settings.settings.map { it.language }.distinctUntilChanged().drop(1).collect { language.refresh() }
         }
@@ -195,6 +228,20 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     fun removeHistory(videoId: String) {
         viewModelScope.launch { c.settings.removeHistory(videoId) }
+    }
+
+    fun setLanguage(code: String) {
+        viewModelScope.launch { c.settings.update { it.copy(language = code) } }
+    }
+
+    /** Back from a page's content: the next visit starts at its top, on its first card. */
+    fun resetPlace(tab: HomeTab) {
+        focusedKeys.remove(tab)
+        if (tab == HomeTab.Following) hero.reset()
+        // Only lists that are on screen: scrolling one that has never been laid out waits for a layout that may never come.
+        gridStates.getValue(tab).takeIf { it.layoutInfo.totalItemsCount > 0 }?.let { viewModelScope.launch { it.scrollToItem(0) } }
+        val lists = listOf(listStates.getValue(tab)) + rowStates.filterKeys { it.startsWith("${tab.name}/") }.values
+        lists.filter { it.layoutInfo.totalItemsCount > 0 }.forEach { viewModelScope.launch { it.scrollToItem(0) } }
     }
 
     fun onQueryChange(value: String) {
@@ -227,11 +274,45 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class) // FocusProperties.enter: redirects focus entering the tab row to the active tab
+/**
+ * How a page hands focus to its content: [entry] sits on the card that should be focused when the page is entered,
+ * and [shouldFocusNow] says whether that should happen as soon as the cards arrive (coming back from a stream, the
+ * first launch, or a page opened from the navigation before it had loaded). [done] is called once it has.
+ */
+class PageFocus(val tab: HomeTab, val entry: FocusRequester, private val vm: HomeViewModel) {
+    fun shouldFocusNow(): Boolean =
+        vm.returning || vm.pendingEnter == tab || (vm.launchFocusPending && tab == HomeTab.Following)
+
+    fun done() {
+        vm.returning = false
+        vm.launchFocusPending = false
+        if (vm.pendingEnter == tab) vm.pendingEnter = null
+    }
+
+    val restoreKey: Any? get() = vm.focusedKeys[tab]
+
+    fun remember(key: Any) {
+        vm.focusedKeys[tab] = key
+    }
+}
+
+/** Requests focus on [requester] after the next frame (so a card that was just composed is attached); false if it can't. */
+private suspend fun focusSoon(requester: FocusRequester): Boolean {
+    withFrameNanos { }
+    return try {
+        requester.requestFocus()
+        true
+    } catch (_: IllegalStateException) {
+        false
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun HomeScreen(
     vm: HomeViewModel,
     updates: UpdateViewModel,
+    account: String,
     onOpenStream: (Stream) -> Unit,
     onOpenCategory: (Category) -> Unit,
     onOpenChannel: (String) -> Unit,
@@ -240,93 +321,115 @@ fun HomeScreen(
     val container = LocalAppContainer.current
     val settings by container.settings.settings.collectAsStateWithLifecycle(AppSettings())
     val preview = if (settings.livePreviews) rememberPreviewController() else null
-    val tabRequesters = remember { HomeTab.entries.associateWith { FocusRequester() } }
-    LaunchedEffect(Unit) {
-        // Fresh start: park focus on the active tab. Returning from a stream: the grid restores the card instead.
-        if (vm.focusedKeys[vm.tab] == null) {
-            try {
-                tabRequesters.getValue(vm.tab).requestFocus()
-            } catch (_: IllegalStateException) {
-                // not attached yet; the first D-pad press will focus something sensible
-            }
-        }
-    }
+    val railRequesters = remember { HomeTab.entries.associateWith { FocusRequester() } }
+    val entryRequesters = remember { HomeTab.entries.associateWith { FocusRequester() } }
+    var railFocused by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    // Back from anywhere in the content goes up to the tabs first; only Back on the tabs leaves the app, so a stray
-    // press while browsing a long list doesn't close it.
-    var tabsFocused by remember { mutableStateOf(false) }
-    val backScope = rememberCoroutineScope()
-    BackHandler(enabled = !tabsFocused) {
-        backScope.launch { vm.gridStates.getValue(vm.tab).scrollToItem(0) }
+    // Home leaves composition only when another screen (player, channel, category) covers it.
+    DisposableEffect(Unit) { onDispose { vm.returning = !railFocused } }
+
+    fun focusRail() {
         try {
-            tabRequesters.getValue(vm.tab).requestFocus()
+            railRequesters.getValue(vm.tab).requestFocus()
         } catch (_: IllegalStateException) {
-            // tab row not attached; nothing to move to
+            // not attached yet
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        UpdateBanner(updates)
-        Row(
-            Modifier.fillMaxWidth().padding(start = 48.dp, end = 40.dp, top = 16.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+    /** Opens [tab] and moves into it: onto its remembered card, or its first one (as soon as it has one). */
+    fun enter(tab: HomeTab) {
+        vm.tab = tab
+        scope.launch {
+            if (!focusSoon(entryRequesters.getValue(tab))) vm.pendingEnter = tab
+        }
+    }
+
+    // Back from anywhere in a page goes to the navigation first (and the page starts from its top next time); only
+    // Back on the navigation leaves the app, so a stray press while browsing a long list doesn't close it.
+    BackHandler(enabled = !railFocused) {
+        vm.resetPlace(vm.tab)
+        vm.pendingEnter = null
+        focusRail()
+    }
+
+    val live by vm.following.state.collectAsStateWithLifecycle()
+    val favoriteLive by vm.favoriteStreams.collectAsStateWithLifecycle()
+    val liveCount = remember(live.items, favoriteLive) { (live.items.map { it.userLogin.lowercase() } + favoriteLive.keys).toSet().size }
+    val updateState by updates.state.collectAsStateWithLifecycle()
+    val updateDot = updateState is UpdateUi.Available || updateState is UpdateUi.NeedsPermission ||
+        updateState is UpdateUi.Downloading || updateState is UpdateUi.SignatureMismatch
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent {
+                if (it.type == KeyEventType.KeyDown) vm.launchFocusPending = false
+                false
+            },
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                // Up and Down at a page's edges stay put (the navigation is only reached with Left). Only those two are
+                // vetoed: anything else, such as Back handing focus to the navigation, must be let through.
+                .focusProperties {
+                    exit = { direction ->
+                        if (direction == FocusDirection.Up || direction == FocusDirection.Down) FocusRequester.Cancel else FocusRequester.Default
+                    }
+                }
+                .focusGroup(),
         ) {
-            Text("S0und+", style = MaterialTheme.typography.headlineSmall, color = Palette.Brand, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(4.dp))
-            Row(
-                Modifier
-                    .weight(1f)
-                    .onFocusChanged { tabsFocused = it.hasFocus }
-                    // Tabs select on focus, so pressing Up from a card must land on the *active* tab. Without this,
-                    // focus goes to whichever pill is geometrically above that card and silently swaps the content.
-                    .focusProperties { enter = { tabRequesters.getValue(vm.tab) } }
-                    .focusGroup()
-                    .horizontalScroll(rememberScrollState())
-                    // Inside the scrolling area, so a focused pill's ring and enlargement aren't clipped at the edges.
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for (tab in HomeTab.entries) {
-                    PillButton(
-                        label = tab.label,
-                        onClick = { vm.tab = tab },
-                        selected = tab == vm.tab,
-                        onFocused = { vm.tab = tab },
-                        modifier = Modifier.focusRequester(tabRequesters.getValue(tab)),
+            UpdateBanner(updates, Modifier.padding(start = Layout.keyline, end = Layout.endMargin, top = 16.dp))
+            Box(Modifier.weight(1f)) {
+                val focus = PageFocus(vm.tab, entryRequesters.getValue(vm.tab), vm)
+                when (vm.tab) {
+                    HomeTab.Following -> FollowingContent(vm, focus, preview, onOpenStream, onOpenChannel, onPlay, onEmpty = ::focusRail)
+                    HomeTab.Live -> StreamGridPage(
+                        vm, focus, vm.live, preview, onOpenStream, onOpenChannel,
+                        title = "Live",
+                        subtitle = "The most-watched streams on Twitch right now",
+                        emptyText = "No live streams found.",
                     )
+                    HomeTab.Language -> LanguagePage(vm, focus, settings.language, preview, onOpenStream, onOpenChannel)
+                    HomeTab.Categories -> PagedGrid(
+                        loader = vm.categories,
+                        gridState = vm.gridStates.getValue(HomeTab.Categories),
+                        emptyText = "No categories found.",
+                        itemKey = { it.id },
+                        columns = 6,
+                        restoreFocusKey = focus.restoreKey,
+                        entryRequester = focus.entry,
+                        focusOnReady = { focus.shouldFocusNow().also { if (it) focus.done() } },
+                        onItemFocused = focus::remember,
+                        header = { PageHeader("Categories", "What people are watching, most viewers first") },
+                        contentType = "poster",
+                    ) { category, modifier -> CategoryPoster(category, { onOpenCategory(category) }, modifier) }
+                    HomeTab.History -> HistoryContent(vm, focus, onPlay)
+                    HomeTab.Search -> SearchContent(vm, focus, onOpenCategory, onOpenChannel)
+                    HomeTab.Settings -> SettingsContent(updates, focus.entry, focusNow = { focus.shouldFocusNow().also { if (it) focus.done() } })
                 }
             }
-            // The account name lives in Settings → Account; up here it only pushed the last tab off the screen.
-            if (settings.showClock) ClockText()
         }
 
-        when (vm.tab) {
-            HomeTab.Following -> FollowingContent(vm, preview, onOpenStream, onOpenChannel)
-            HomeTab.Live -> StreamGrid(vm, HomeTab.Live, vm.live, "No live streams found.", preview, onOpenStream, onOpenChannel)
-            HomeTab.Language -> Column(Modifier.fillMaxSize()) {
-                Text(
-                    "Streams in ${TwitchLanguages.name(settings.language)}  ·  change the language in Settings",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Palette.Muted,
-                    modifier = Modifier.padding(horizontal = 48.dp),
-                )
-                Box(Modifier.weight(1f)) {
-                    StreamGrid(vm, HomeTab.Language, vm.language, "Nobody is streaming in this language right now.", preview, onOpenStream, onOpenChannel)
-                }
-            }
-            HomeTab.Categories -> PagedGrid(
-                loader = vm.categories,
-                gridState = vm.gridStates.getValue(HomeTab.Categories),
-                emptyText = "No categories found.",
-                itemKey = { it.id },
-                minCellWidth = 180.dp,
-                restoreFocusKey = vm.focusedKeys[HomeTab.Categories],
-                onItemFocused = { vm.focusedKeys[HomeTab.Categories] = it },
-            ) { category, modifier -> CategoryCard(category, { onOpenCategory(category) }, modifier) }
-            HomeTab.History -> HistoryContent(vm, onPlay)
-            HomeTab.Search -> SearchContent(vm, onOpenCategory, onOpenChannel)
-            HomeTab.Settings -> SettingsContent(updates)
+        NavRail(
+            selected = vm.tab,
+            requesters = railRequesters,
+            onSettle = { vm.tab = it },
+            onEnter = ::enter,
+            onFocusChanged = { focused -> railFocused = focused },
+            onItemFocused = {
+                // Moving in the navigation means the viewer is choosing: nothing should pull focus into a page now.
+                vm.pendingEnter = null
+                vm.launchFocusPending = false
+            },
+            account = account,
+            liveCount = liveCount,
+            updateDot = updateDot,
+            modifier = Modifier.testTag("navRail"),
+        )
+        if (settings.showClock) {
+            ClockText(Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = Layout.endMargin))
         }
     }
 }
@@ -341,193 +444,375 @@ private fun rememberPreviewController(): PreviewController {
     return controller
 }
 
+/** A page's title and a quieter line under it; the first item of a grid, so it scrolls away with the cards. */
 @Composable
-private fun StreamGrid(
+fun PageHeader(title: String, subtitle: String? = null, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
+    Row(modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = AppType.Headline, color = Palette.OnBackground)
+            if (subtitle != null) Text(subtitle, style = AppType.BodyM, color = Palette.TextTertiary)
+        }
+        if (action != null) action()
+    }
+}
+
+@Composable
+private fun StreamGridPage(
     vm: HomeViewModel,
-    tab: HomeTab,
+    focus: PageFocus,
     loader: PagedLoader<Stream>,
-    emptyText: String,
     preview: PreviewController?,
     onOpenStream: (Stream) -> Unit,
     onOpenChannel: (String) -> Unit,
+    title: String,
+    subtitle: String,
+    emptyText: String,
+    action: (@Composable () -> Unit)? = null,
 ) {
     val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val favoriteLogins = remember(favorites) { favorites.map { it.login.lowercase() }.toSet() }
     PagedGrid(
         loader = loader,
-        gridState = vm.gridStates.getValue(tab),
+        gridState = vm.gridStates.getValue(focus.tab),
         emptyText = emptyText,
         itemKey = { it.userId },
-        restoreFocusKey = vm.focusedKeys[tab],
-        onItemFocused = { vm.focusedKeys[tab] = it },
+        restoreFocusKey = focus.restoreKey,
+        entryRequester = focus.entry,
+        focusOnReady = { focus.shouldFocusNow().also { if (it) focus.done() } },
+        onItemFocused = focus::remember,
+        header = { PageHeader(title, "$subtitle  ·  Hold OK on a stream for its channel", action = action) },
     ) { stream, modifier ->
         StreamCard(
             stream = stream,
             onClick = { onOpenStream(stream) },
             modifier = modifier,
             preview = preview,
-            isFavorite = favorites.any { it.login.equals(stream.userLogin, ignoreCase = true) },
+            isFavorite = stream.userLogin.lowercase() in favoriteLogins,
             onLongClick = { onOpenChannel(stream.userLogin) },
         )
     }
 }
 
-/** Followed channels in three sections: your favorites first, then who is live, then who is offline. */
 @Composable
-private fun FollowingContent(
+private fun LanguagePage(
     vm: HomeViewModel,
+    focus: PageFocus,
+    language: String,
     preview: PreviewController?,
     onOpenStream: (Stream) -> Unit,
     onOpenChannel: (String) -> Unit,
+) {
+    var picking by remember { mutableStateOf(false) }
+    val name = TwitchLanguages.name(language)
+    StreamGridPage(
+        vm, focus, vm.language, preview, onOpenStream, onOpenChannel,
+        title = "Live in $name",
+        subtitle = "The most-watched streams in $name",
+        emptyText = "Nobody is streaming in this language right now.",
+        action = { PillButton("Change language", { picking = true }, icon = Icons.Rounded.Translate) },
+    )
+    if (picking) {
+        LanguageDialog(
+            current = language,
+            title = "Language",
+            onPick = {
+                picking = false
+                vm.setLanguage(it)
+            },
+            onDismiss = { picking = false },
+        )
+    }
+}
+
+/** Following: a hero describing the focused card, over rows of favourites, who is live, what to resume, and the rest. */
+@Composable
+private fun FollowingContent(
+    vm: HomeViewModel,
+    focus: PageFocus,
+    preview: PreviewController?,
+    onOpenStream: (Stream) -> Unit,
+    onOpenChannel: (String) -> Unit,
+    onPlay: (PlayTarget) -> Unit,
+    onEmpty: () -> Unit,
 ) {
     val live by vm.following.state.collectAsStateWithLifecycle()
     val offline by vm.offline.state.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val favoriteLive by vm.favoriteStreams.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
+    val profiles by vm.profiles.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshFollowing() }
 
-    val gridState = vm.gridStates.getValue(HomeTab.Following)
-    val restorer = remember { FocusRestorer(vm.focusedKeys[HomeTab.Following]) }
-    LoadMoreEffect(gridState, enabled = live.nextCursor != null || offline.nextCursor != null) {
-        vm.following.loadMore()
-        vm.offline.loadMore()
+    val favoriteLogins = remember(favorites) { favorites.map { it.login.lowercase() }.toSet() }
+    val offlineItems = remember(offline.items, live.items, favoriteLive) {
+        val liveLogins = live.items.map { it.userLogin.lowercase() }.toSet() + favoriteLive.keys
+        offline.items.filter { it.login.lowercase() !in liveLogins }
+    }
+    val continueWatching = remember(history) { history.take(CONTINUE_WATCHING_COUNT) }
+    LaunchedEffect(offlineItems.size, favorites, live.items.size) {
+        vm.loadProfiles(live.items.map { it.userId } + favorites.mapNotNull { it.userId } + offlineItems.map { it.id })
     }
 
-    val liveLogins = live.items.map { it.userLogin.lowercase() }.toSet() + favoriteLive.keys
-    val offlineItems = offline.items.filter { it.login.lowercase() !in liveLogins }
-    val avatars by vm.avatars.collectAsStateWithLifecycle()
-    LaunchedEffect(offlineItems.size, favorites) {
-        vm.loadAvatars(offlineItems.map { it.id } + favorites.mapNotNull { it.userId })
-    }
-
-    if (live.items.isEmpty() && favorites.isEmpty() && offlineItems.isEmpty()) {
+    val hasAnything = live.items.isNotEmpty() || favorites.isNotEmpty() || offlineItems.isNotEmpty()
+    if (!hasAnything) {
         when {
-            live.loading || offline.loading || (live.loadedAtMillis == 0L && live.error == null) -> LoadingState()
+            live.loading || offline.loading || (live.loadedAtMillis == 0L && live.error == null) -> FollowingSkeleton()
             live.error != null -> MessageState(live.error.orEmpty(), actionLabel = "Try again", onAction = vm::refreshFollowing)
-            else -> MessageState("You aren't following anyone yet. Follow channels on twitch.tv and they'll appear here.")
+            else -> {
+                MessageState("You aren't following anyone yet. Follow channels on twitch.tv and they'll appear here.")
+                LaunchedEffect(Unit) {
+                    if (focus.shouldFocusNow()) {
+                        focus.done()
+                        onEmpty()
+                    }
+                }
+            }
         }
         return
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(260.dp),
-        state = gridState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        if (favorites.isNotEmpty()) {
-            item(key = "h-fav", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Favorites") }
-            items(favorites, key = { "fav:${it.login}" }) { fav ->
-                val itemKey = "fav:${fav.login}"
-                val stream = favoriteLive[fav.login.lowercase()]
-                val itemModifier = Modifier
-                    .fillMaxWidth()
-                    .then(restorer.forItem(itemKey))
-                    .focusNotifier { vm.focusedKeys[HomeTab.Following] = itemKey }
-                if (stream != null) {
-                    StreamCard(stream, { onOpenStream(stream) }, itemModifier, preview, isFavorite = true, onLongClick = { onOpenChannel(fav.login) })
-                } else {
-                    ChannelCard(
-                        ChannelResult(id = fav.userId.orEmpty(), login = fav.login, displayName = fav.displayName, thumbnailUrl = avatars[fav.userId].orEmpty()),
-                        onClick = { onOpenChannel(fav.login) },
-                        modifier = itemModifier,
-                    )
+    // Each card's key and its hero description, in screen order; the first is where focus goes by default.
+    fun liveModel(stream: Stream, section: String) =
+        HeroModel.Live(stream, profiles[stream.userId]?.avatarUrl.orEmpty(), stream.userLogin.lowercase() in favoriteLogins, section)
+
+    fun channelModel(id: String?, name: String, favorite: Boolean, section: String): HeroModel.Channel {
+        val p = id?.let { profiles[it] }
+        return HeroModel.Channel(name, p?.avatarUrl.orEmpty(), p?.description.orEmpty(), favorite, section)
+    }
+
+    val firstKey: String? = favorites.firstOrNull()?.let { "fav:${it.login}" }
+        ?: live.items.firstOrNull()?.let { "live:${it.userId}" }
+        ?: continueWatching.firstOrNull()?.let { "vod:${it.videoId}" }
+        ?: offlineItems.firstOrNull()?.let { "off:${it.login}" }
+    val keys = remember(favorites, live.items, continueWatching, offlineItems) {
+        buildSet {
+            favorites.forEach { add("fav:${it.login}") }
+            live.items.forEach { add("live:${it.userId}") }
+            continueWatching.forEach { add("vod:${it.videoId}") }
+            offlineItems.forEach { add("off:${it.login}") }
+        }
+    }
+    val entryKey = (focus.restoreKey as? String)?.takeIf { it in keys } ?: firstKey
+    val hero = vm.hero
+
+    // The hero describes the first card until something is focused.
+    val firstModel: HeroModel? = favorites.firstOrNull()?.let { fav ->
+        favoriteLive[fav.login.lowercase()]?.let { liveModel(it, "Favorites") } ?: channelModel(fav.userId, fav.displayName, true, "Favorites")
+    } ?: live.items.firstOrNull()?.let { liveModel(it, "Live now") }
+        ?: continueWatching.firstOrNull()?.let { HeroModel.Vod(it, "Continue watching") }
+        ?: offlineItems.firstOrNull()?.let { channelModel(it.id, it.displayName, false, "Offline") }
+    LaunchedEffect(firstModel != null, hero.shown == null) {
+        if (hero.shown == null && firstModel != null) hero.showNow(firstModel)
+    }
+    LaunchedEffect(entryKey != null) {
+        if (entryKey != null && focus.shouldFocusNow()) {
+            focusSoon(focus.entry)
+            focus.done()
+        }
+    }
+
+    @Composable
+    fun cardModifier(key: String, model: () -> HeroModel): Modifier = Modifier
+        .let { if (key == entryKey) it.focusRequester(focus.entry) else it }
+        .focusNotifier {
+            focus.remember(key)
+            hero.target = model()
+        }
+
+    val listState = vm.listStates.getValue(HomeTab.Following)
+    val nearEnd by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            info.totalItemsCount > 0 && last >= info.totalItemsCount - 3
+        }
+    }
+    LaunchedEffect(nearEnd, offline.items.size) {
+        if (nearEnd) {
+            vm.offline.loadMore()
+            vm.following.loadMore()
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        HeroBackdrop(hero, Modifier.align(Alignment.TopEnd))
+        Column(Modifier.fillMaxSize()) {
+            HeroInfo(hero)
+            KeylineScrolling(FOLLOWING_ROW_KEYLINE) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 240.dp),
+                    verticalArrangement = Arrangement.spacedBy(Layout.rowGap),
+                ) {
+                    if (favorites.isNotEmpty()) {
+                        item(key = "row-fav", contentType = "cardRow") {
+                            MediaRow("Favorites", vm.rowState("Following/fav")) {
+                                items(favorites, key = { it.login }, contentType = { "card" }) { fav ->
+                                    val key = "fav:${fav.login}"
+                                    val stream = favoriteLive[fav.login.lowercase()]
+                                    if (stream != null) {
+                                        StreamCard(
+                                            stream, { onOpenStream(stream) },
+                                            cardModifier(key) { liveModel(stream, "Favorites") }.width(Layout.cardWidth),
+                                            preview, isFavorite = true,
+                                            onLongClick = { onOpenChannel(fav.login) },
+                                            showTitleOnFocus = false,
+                                        )
+                                    } else {
+                                        OfflineChannelCard(
+                                            fav.displayName, fav.userId?.let { profiles[it]?.avatarUrl }.orEmpty(),
+                                            onClick = { onOpenChannel(fav.login) },
+                                            modifier = cardModifier(key) { channelModel(fav.userId, fav.displayName, true, "Favorites") }.width(Layout.cardWidth),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (live.error != null && live.items.isEmpty()) {
+                        // Favorites are local, so they show even when Twitch could not be asked who is live: say so.
+                        item(key = "live-error", contentType = "notice") {
+                            Row(
+                                Modifier.padding(start = Layout.keyline, end = Layout.endMargin),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("Couldn't load who is live: ${live.error.orEmpty()}", style = AppType.BodyM, color = Palette.Muted, modifier = Modifier.weight(1f, fill = false))
+                                PillButton("Try again", vm::refreshFollowing)
+                            }
+                        }
+                    }
+                    if (live.items.isNotEmpty()) {
+                        item(key = "row-live", contentType = "cardRow") {
+                            MediaRow("Live now", vm.rowState("Following/live"), count = live.items.size, onNearEnd = vm.following::loadMore) {
+                                items(live.items, key = { it.userId }, contentType = { "card" }) { stream ->
+                                    StreamCard(
+                                        stream, { onOpenStream(stream) },
+                                        cardModifier("live:${stream.userId}") { liveModel(stream, "Live now") }.width(Layout.cardWidth),
+                                        preview, isFavorite = stream.userLogin.lowercase() in favoriteLogins,
+                                        onLongClick = { onOpenChannel(stream.userLogin) },
+                                        showTitleOnFocus = false,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (continueWatching.isNotEmpty()) {
+                        item(key = "row-vod", contentType = "cardRow") {
+                            MediaRow("Continue watching", vm.rowState("Following/vod")) {
+                                items(continueWatching, key = { it.videoId }, contentType = { "card" }) { entry ->
+                                    HistoryCard(
+                                        entry,
+                                        onClick = { onPlay(entry.toPlayTarget()) },
+                                        modifier = cardModifier("vod:${entry.videoId}") { HeroModel.Vod(entry, "Continue watching") }.width(Layout.cardWidth),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (offlineItems.isNotEmpty()) {
+                        item(key = "off-title", contentType = "title") { RowTitle("Offline", offlineItems.size) }
+                        // A wall of avatars, a line at a time: hundreds of follows stay a few Down presses apart.
+                        itemsIndexed(offlineItems.chunked(OFFLINE_PER_LINE), key = { i, _ -> "off-line:$i" }, contentType = { _, _ -> "avatarLine" }) { _, line ->
+                            Row(Modifier.padding(start = Layout.keyline, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                for (channel in line) {
+                                    val favorite = channel.login.lowercase() in favoriteLogins
+                                    AvatarTile(
+                                        channel.displayName, profiles[channel.id]?.avatarUrl.orEmpty(),
+                                        onClick = { onOpenChannel(channel.login) },
+                                        modifier = cardModifier("off:${channel.login}") { channelModel(channel.id, channel.displayName, favorite, "Offline") },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (live.loading || offline.loading) {
+                        item(key = "loading", contentType = "loading") {
+                            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { Spinner(size = 28.dp) }
+                        }
+                    }
                 }
-            }
-        }
-        if (live.error != null && live.items.isEmpty()) {
-            // Favorites are local, so they show even when Twitch could not be asked who is live: say so, don't hide it.
-            item(key = "live-error", span = { GridItemSpan(maxLineSpan) }) {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Couldn't load who is live: ${live.error.orEmpty()}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Palette.Muted,
-                    )
-                    PillButton("Try again", vm::refreshFollowing)
-                }
-            }
-        }
-        if (live.items.isNotEmpty()) {
-            item(key = "h-live", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Live now") }
-            items(live.items, key = { "live:${it.userId}" }) { stream ->
-                val itemKey = "live:${stream.userId}"
-                StreamCard(
-                    stream = stream,
-                    onClick = { onOpenStream(stream) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(restorer.forItem(itemKey))
-                        .focusNotifier { vm.focusedKeys[HomeTab.Following] = itemKey },
-                    preview = preview,
-                    isFavorite = favorites.any { it.login.equals(stream.userLogin, ignoreCase = true) },
-                    onLongClick = { onOpenChannel(stream.userLogin) },
-                )
-            }
-        }
-        if (offlineItems.isNotEmpty()) {
-            item(key = "h-off", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Offline") }
-            items(offlineItems, key = { "off:${it.login}" }) { channel ->
-                val itemKey = "off:${channel.login}"
-                ChannelCard(
-                    ChannelResult(id = channel.id, login = channel.login, displayName = channel.displayName, thumbnailUrl = avatars[channel.id].orEmpty()),
-                    onClick = { onOpenChannel(channel.login) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(restorer.forItem(itemKey))
-                        .focusNotifier { vm.focusedKeys[HomeTab.Following] = itemKey },
-                )
             }
         }
     }
 }
 
+private fun HistoryEntry.toPlayTarget() = PlayTarget.Vod(
+    id = videoId,
+    title = title,
+    channelName = channelName,
+    channelLogin = channelLogin,
+    channelUserId = null,
+    durationSeconds = durationSeconds,
+    thumbnailUrl = thumbnailUrl,
+)
+
+/** The shape of Following while it loads: hero lines, then a row of cards. */
 @Composable
-private fun HistoryContent(vm: HomeViewModel, onPlay: (PlayTarget) -> Unit) {
+private fun FollowingSkeleton() {
+    Column(Modifier.fillMaxSize().padding(start = Layout.keyline, top = 56.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        SkeletonBlock(Modifier.width(120.dp).height(12.dp), radius = 4.dp)
+        SkeletonBlock(Modifier.width(280.dp).height(32.dp))
+        SkeletonBlock(Modifier.width(220.dp).height(16.dp), radius = 4.dp)
+        SkeletonBlock(Modifier.width(420.dp).height(14.dp), radius = 4.dp)
+        Box(Modifier.height(40.dp))
+        SkeletonBlock(Modifier.width(120.dp).height(16.dp), radius = 4.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(Layout.cardGap)) {
+            repeat(5) { SkeletonBlock(Modifier.width(Layout.cardWidth).aspectRatio(16f / 9f)) }
+        }
+    }
+}
+
+@Composable
+private fun HistoryContent(vm: HomeViewModel, focus: PageFocus, onPlay: (PlayTarget) -> Unit) {
     val history by vm.history.collectAsStateWithLifecycle()
     if (history.isEmpty()) {
-        MessageState("Past broadcasts you watch show up here so you can pick up where you left off.")
+        MessageState("Past broadcasts you watch show up here so you can pick up where you left off.", icon = Icons.Rounded.History)
         return
     }
-    val gridState = vm.gridStates.getValue(HomeTab.History)
-    val restorer = remember { FocusRestorer(vm.focusedKeys[HomeTab.History]) }
-    Column(Modifier.fillMaxSize()) {
-        Text(
-            "Long-press a video to remove it from history",
-            style = MaterialTheme.typography.bodyMedium,
-            color = Palette.Muted,
-            modifier = Modifier.padding(horizontal = 48.dp),
-        )
+    val entryKey = (focus.restoreKey as? String)?.takeIf { key -> history.any { it.videoId == key } } ?: history.first().videoId
+    LaunchedEffect(Unit) {
+        if (focus.shouldFocusNow()) {
+            focusSoon(focus.entry)
+            focus.done()
+        }
+    }
+    // After a removal, focus moves to the card that took its place (or the one before, if it was the last).
+    var removedIndex by remember { mutableStateOf(-1) }
+    val refocus = remember { FocusRequester() }
+    val refocusIndex = if (removedIndex >= 0) removedIndex.coerceAtMost(history.lastIndex) else -1
+    LaunchedEffect(history.size) {
+        if (removedIndex >= 0) {
+            focusSoon(refocus)
+            removedIndex = -1
+        }
+    }
+    KeylineScrolling(140.dp) {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(260.dp),
-            state = gridState,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            columns = GridCells.Fixed(4),
+            state = vm.gridStates.getValue(HomeTab.History),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = Layout.keyline, end = Layout.endMargin, top = 16.dp, bottom = 64.dp),
+            horizontalArrangement = Arrangement.spacedBy(Layout.cardGap),
+            verticalArrangement = Arrangement.spacedBy(Layout.gridLineGap),
         ) {
-            items(history, key = { it.videoId }) { entry ->
+            item(key = "header", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
+                PageHeader("History", "Continue where you left off  ·  Hold OK on a video to remove it")
+            }
+            itemsIndexed(history, key = { _, it -> it.videoId }, contentType = { _, _ -> "card" }) { index, entry ->
                 HistoryCard(
                     entry = entry,
-                    onClick = {
-                        onPlay(
-                            PlayTarget.Vod(
-                                id = entry.videoId,
-                                title = entry.title,
-                                channelName = entry.channelName,
-                                channelLogin = entry.channelLogin,
-                                channelUserId = null,
-                                durationSeconds = entry.durationSeconds,
-                                thumbnailUrl = entry.thumbnailUrl,
-                            ),
-                        )
+                    onClick = { onPlay(entry.toPlayTarget()) },
+                    onLongClick = {
+                        removedIndex = index
+                        vm.removeHistory(entry.videoId)
                     },
-                    onLongClick = { vm.removeHistory(entry.videoId) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(restorer.forItem(entry.videoId))
-                        .focusNotifier { vm.focusedKeys[HomeTab.History] = entry.videoId },
+                        .let { if (entry.videoId == entryKey) it.focusRequester(focus.entry) else it }
+                        .let { if (index == refocusIndex) it.focusRequester(refocus) else it }
+                        .focusNotifier { focus.remember(entry.videoId) },
                 )
             }
         }
@@ -535,43 +820,99 @@ private fun HistoryContent(vm: HomeViewModel, onPlay: (PlayTarget) -> Unit) {
 }
 
 @Composable
-private fun SearchContent(vm: HomeViewModel, onOpenCategory: (Category) -> Unit, onOpenChannel: (String) -> Unit) {
+private fun SearchContent(vm: HomeViewModel, focus: PageFocus, onOpenCategory: (Category) -> Unit, onOpenChannel: (String) -> Unit) {
     val state by vm.search.collectAsStateWithLifecycle()
-    val gridState = rememberLazyGridState()
+    val popular by vm.categories.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) {
+        vm.categories.ensureFresh(10 * 60_000L)
+        if (focus.shouldFocusNow()) {
+            focusSoon(focus.entry)
+            focus.done()
+        }
+    }
+    // Coming back from a channel or category opened here, focus returns to that result; otherwise to the field.
+    val restore = focus.restoreKey as? String
+    val shownKeys = remember(state, popular.items) {
+        when (val s = state) {
+            is SearchState.Results -> s.channels.map { "ch:${it.id}" } + s.categories.map { "cat:${it.id}" }
+            SearchState.Idle -> popular.items.take(20).map { "pop:${it.id}" }
+            else -> emptyList()
+        }.toSet()
+    }
+    val entryKey = restore?.takeIf { it in shownKeys }
+    fun result(key: String): Modifier = Modifier
+        .let { if (key == entryKey) it.focusRequester(focus.entry) else it }
+        .focusNotifier { focus.remember(key) }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 48.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.fillMaxSize()) {
         TvTextField(
             value = vm.query,
             onValueChange = vm::onQueryChange,
             hint = "Search channels and categories",
             imeAction = ImeAction.Search,
+            leadingIcon = Icons.Rounded.Search,
+            modifier = Modifier
+                .padding(start = Layout.keyline, end = 160.dp, top = 32.dp, bottom = 8.dp)
+                .let { if (entryKey == null) it.focusRequester(focus.entry) else it },
         )
-        when (val s = state) {
-            SearchState.Idle -> MessageState("Type at least two letters to search.")
-            SearchState.Loading -> LoadingState()
-            is SearchState.Failed -> MessageState(s.message, actionLabel = "Try again", onAction = { vm.onQueryChange(vm.query) })
-            is SearchState.Results -> {
-                if (s.channels.isEmpty() && s.categories.isEmpty()) {
-                    MessageState("Nothing found for “${vm.query.trim()}”.")
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(260.dp),
-                        state = gridState,
-                        contentPadding = PaddingValues(vertical = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
+        KeylineScrolling(FOLLOWING_ROW_KEYLINE) {
+            LazyColumn(
+                state = vm.listStates.getValue(HomeTab.Search),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 200.dp),
+                verticalArrangement = Arrangement.spacedBy(Layout.rowGap),
+            ) {
+                when (val s = state) {
+                    SearchState.Idle -> {
+                        item(key = "hint", contentType = "hint") {
+                            Text("Type at least two letters to search.", style = AppType.BodyM, color = Palette.TextTertiary, modifier = Modifier.padding(start = Layout.keyline))
+                        }
+                        if (popular.items.isNotEmpty()) {
+                            item(key = "popular", contentType = "posterRow") {
+                                MediaRow("Popular categories", vm.rowState("Search/popular")) {
+                                    items(popular.items.take(20), key = { it.id }, contentType = { "poster" }) { category ->
+                                        CategoryPoster(category, { onOpenCategory(category) }, result("pop:${category.id}").width(120.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    SearchState.Loading -> item(key = "loading", contentType = "loading") {
+                        Row(Modifier.padding(start = Layout.keyline, top = 32.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            repeat(7) { SkeletonBlock(Modifier.width(Layout.avatar).height(Layout.avatar), radius = 40.dp) }
+                        }
+                    }
+                    is SearchState.Failed -> item(key = "failed", contentType = "notice") {
+                        MessageState(s.message, Modifier.fillMaxWidth(), actionLabel = "Try again", onAction = { vm.onQueryChange(vm.query) })
+                    }
+                    is SearchState.Results -> {
+                        if (s.channels.isEmpty() && s.categories.isEmpty()) {
+                            item(key = "none", contentType = "notice") {
+                                MessageState("Nothing found for “${vm.query.trim()}”.", Modifier.fillMaxWidth())
+                            }
+                        }
                         if (s.channels.isNotEmpty()) {
-                            item(key = "h-channels", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Channels") }
-                            items(s.channels, key = { "ch:${it.id}" }) { channel ->
-                                ChannelCard(channel, { onOpenChannel(channel.login) }, Modifier.fillMaxWidth())
+                            item(key = "channels", contentType = "avatarRow") {
+                                MediaRow("Channels", vm.rowState("Search/channels"), count = s.channels.size, itemSpacing = 12.dp) {
+                                    items(s.channels, key = { it.id }, contentType = { "avatar" }) { channel ->
+                                        AvatarTile(
+                                            channel.displayName, channel.thumbnailUrl,
+                                            onClick = { onOpenChannel(channel.login) },
+                                            modifier = result("ch:${channel.id}"),
+                                            live = channel.isLive,
+                                            subtitle = if (channel.isLive) channel.gameName.ifBlank { "Live" } else "Offline",
+                                        )
+                                    }
+                                }
                             }
                         }
                         if (s.categories.isNotEmpty()) {
-                            item(key = "h-categories", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Categories") }
-                            items(s.categories, key = { "cat:${it.id}" }) { category ->
-                                CategoryCard(category, { onOpenCategory(category) }, Modifier.fillMaxWidth())
+                            item(key = "categories", contentType = "posterRow") {
+                                MediaRow("Categories", vm.rowState("Search/categories"), count = s.categories.size) {
+                                    items(s.categories, key = { it.id }, contentType = { "poster" }) { category ->
+                                        CategoryPoster(category, { onOpenCategory(category) }, result("cat:${category.id}").width(120.dp))
+                                    }
+                                }
                             }
                         }
                     }
@@ -581,7 +922,7 @@ private fun SearchContent(vm: HomeViewModel, onOpenCategory: (Category) -> Unit,
     }
 }
 
-@Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleLarge, color = Palette.OnBackground, modifier = Modifier.padding(top = 8.dp))
-}
+/** Where the focused row's cards sit, measured from the top of the list (just under the row's title). */
+private val FOLLOWING_ROW_KEYLINE = 46.dp
+private const val OFFLINE_PER_LINE = 7
+private const val CONTINUE_WATCHING_COUNT = 12

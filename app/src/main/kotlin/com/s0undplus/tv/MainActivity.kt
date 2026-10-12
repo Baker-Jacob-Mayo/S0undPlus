@@ -55,6 +55,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // The theme's window background only covers the moment before the first frame; after that Compose paints the
+        // page colour itself, and keeping both would fill the whole screen twice on every frame.
+        window.decorView.post { window.setBackgroundDrawable(null) }
 
         // Android 12+ can shrink to PiP automatically when the user presses Home during playback.
         lifecycleScope.launch {

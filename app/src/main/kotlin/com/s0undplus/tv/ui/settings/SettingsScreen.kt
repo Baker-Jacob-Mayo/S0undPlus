@@ -1,5 +1,21 @@
 package com.s0undplus.tv.ui.settings
 
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextOverflow
+import com.s0undplus.tv.ui.components.KeylineScrolling
+import com.s0undplus.tv.ui.components.LanguageDialog
+import com.s0undplus.tv.ui.components.ListRowSurface
+import com.s0undplus.tv.ui.theme.AppType
+import com.s0undplus.tv.ui.theme.Layout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -76,16 +92,35 @@ import kotlinx.coroutines.launch
 
 private val SIZE_LABELS = listOf("Small", "Medium", "Large")
 
+/** The sections, in list order: the left pane lists them and marks the one being browsed. */
+private val SECTIONS = listOf(
+    "Appearance", "Chat", "Chat filters", "Playback", "Ads", "Notifications and home screen", "Updates",
+    "Remote shortcuts (in the player)", "Account", "About",
+)
+
+/** What the left pane says about the focused row. */
+private class PaneState {
+    var title by mutableStateOf("")
+    var help by mutableStateOf<String?>(null)
+}
+
+private val LocalPane = staticCompositionLocalOf { PaneState() }
+
+/**
+ * Settings, in two panes: on the left the list of sections (the one being browsed is marked) and help for the
+ * focused row; on the right one continuous list of every setting. [entry] goes on the first row, and that row takes
+ * focus when [focusNow] says so (the page was just opened from the navigation).
+ */
 @Composable
-fun SettingsContent(updates: UpdateViewModel) {
+fun SettingsContent(updates: UpdateViewModel, entry: FocusRequester, focusNow: () -> Boolean) {
     val container = LocalAppContainer.current
     val initial by produceState<AppSettings?>(null) { value = container.settings.settings.first() }
     val loaded = initial
-    if (loaded == null) LoadingState() else SettingsBody(loaded, updates)
+    if (loaded == null) LoadingState() else SettingsBody(loaded, updates, entry, focusNow)
 }
 
 @Composable
-private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
+private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel, entry: FocusRequester, focusNow: () -> Boolean) {
     val container = LocalAppContainer.current
     val scope = rememberCoroutineScope()
     val s by container.settings.settings.collectAsStateWithLifecycle(loaded)
@@ -141,22 +176,55 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { Header("Appearance") }
+    val pane = remember { PaneState() }
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        if (focusNow()) {
+            withFrameNanos { }
+            try {
+                entry.requestFocus()
+            } catch (_: IllegalStateException) {
+                // not attached yet; Right from the navigation still reaches the list
+            }
+        }
+    }
+    // The section being browsed: the last heading at or above where the focused row rests. When no heading is on
+    // screen (a long section), it stays what it was.
+    var section by remember { mutableStateOf(SECTIONS.first()) }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val headers = listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
+                val key = info.key as? String ?: return@mapNotNull null
+                if (key.startsWith("h:")) key.removePrefix("h:") to info.offset else null
+            }
+            val restPx = listState.layoutInfo.viewportStartOffset + 200
+            headers.lastOrNull { it.second <= restPx }?.first
+                ?: headers.firstOrNull()?.first?.let { first -> SECTIONS.getOrNull(SECTIONS.indexOf(first) - 1) ?: first }
+        }.collect { found -> if (found != null) section = found }
+    }
+
+    Row(Modifier.fillMaxSize()) {
+        SettingsPane(section, pane)
+        CompositionLocalProvider(LocalPane provides pane) {
+          KeylineScrolling(SETTINGS_KEYLINE) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(start = 24.dp, end = Layout.endMargin, top = 28.dp, bottom = 260.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+            item(key = "h:Appearance") { Header("Appearance") }
             item {
-                CycleRow("Theme", s.theme, AppTheme.entries, { it.label }) { v -> update { it.copy(theme = v) } }
+                CycleRow("Theme", s.theme, AppTheme.entries, { it.label }, Modifier.focusRequester(entry)) { v -> update { it.copy(theme = v) } }
             }
             item { ToggleRow("Show clock", s.showClock) { v -> update { it.copy(showClock = v) } } }
             item {
-                ValueRow("Language row", TwitchLanguages.name(s.language)) { showLanguages = true }
+                ValueRow("Language row", TwitchLanguages.name(s.language), help = "The language of the streams on the Language page.") {
+                    showLanguages = true
+                }
             }
 
-            item { Header("Chat") }
+            item(key = "h:Chat") { Header("Chat") }
             item { ToggleRow("Show chat by default", s.chatVisible) { v -> update { it.copy(chatVisible = v) } } }
             item {
                 CycleRow("Chat layout", s.chatLayout, ChatLayout.entries, { it.label }) { v -> update { it.copy(chatLayout = v) } }
@@ -174,7 +242,7 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
             item { ToggleRow("Show sub, raid and mod notices", s.showNotices) { v -> update { it.copy(showNotices = v) } } }
             item { ToggleRow("Load recent messages when joining", s.chatHistory) { v -> update { it.copy(chatHistory = v) } } }
 
-            item { Header("Chat filters") }
+            item(key = "h:Chat filters") { Header("Chat filters") }
             item { ToggleRow("Hide known bots", s.hideBots) { v -> update { it.copy(hideBots = v) } } }
             item { ToggleRow("Hide !commands", s.hideCommands) { v -> update { it.copy(hideCommands = v) } } }
             item {
@@ -186,7 +254,7 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                 SavedTextField(loaded.blockedUsers, "e.g. someusername", onSave = { v -> update { it.copy(blockedUsers = v) } })
             }
 
-            item { Header("Playback") }
+            item(key = "h:Playback") { Header("Playback") }
             item {
                 CycleRow("Preferred quality", s.quality, QualityPreference.OPTIONS, { QualityPreference.label(it) }) { v ->
                     update { it.copy(quality = v) }
@@ -208,27 +276,46 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
             item { ToggleRow("Touch and swipe gestures", s.gestures) { v -> update { it.copy(gestures = v) } } }
             item { ToggleRow("Follow raids automatically", s.followRaids) { v -> update { it.copy(followRaids = v) } } }
             item { ToggleRow("Picture-in-picture on Home button", s.pipOnHome) { v -> update { it.copy(pipOnHome = v) } } }
-            item { ToggleRow("Zoom video to fill the screen (crops 4:3 and letterboxed streams)", s.zoomVideo) { v -> update { it.copy(zoomVideo = v) } } }
             item {
-                ToggleRow("Switch the TV to the stream's frame rate (smooths 50 fps streams)", s.matchFrameRate) { v ->
+                ToggleRow("Zoom video to fill the screen", s.zoomVideo, help = "Crops 4:3 and letterboxed streams so they fill the screen.") { v ->
+                    update { it.copy(zoomVideo = v) }
+                }
+            }
+            item {
+                ToggleRow(
+                    "Match the stream's frame rate",
+                    s.matchFrameRate,
+                    help = "Switches the TV to a refresh rate that suits the stream, such as 50 Hz for a 50 fps stream, which " +
+                        "otherwise judders on a 60 Hz picture. The screen goes dark for a moment when it switches.",
+                ) { v ->
                     update { it.copy(matchFrameRate = v) }
                 }
             }
             item {
-                CycleRow("Other channels to switch to (peek, Channel +/-)", s.otherChannels, OtherChannels.entries, { it.label }) { v ->
+                CycleRow(
+                    "Other channels to switch to",
+                    s.otherChannels,
+                    OtherChannels.entries,
+                    { it.label },
+                    help = "The channels the player's peek view (Blue button) and Channel +/- step through.",
+                ) { v ->
                     update { it.copy(otherChannels = v) }
                 }
             }
             item {
-                ToggleRow("Live previews on cards (needs a capable device)", s.livePreviews) { v -> update { it.copy(livePreviews = v) } }
+                ToggleRow(
+                    "Live previews on cards",
+                    s.livePreviews,
+                    help = "Plays the focused live channel, muted, inside its card after a moment. Needs a capable device.",
+                ) { v -> update { it.copy(livePreviews = v) } }
             }
 
-            item { Header("Ads") }
+            item(key = "h:Ads") { Header("Ads") }
             item {
-                CycleRow("Ad handling", s.adMode, AdMode.entries, { it.label }) { v -> update { it.copy(adMode = v) } }
+                CycleRow("Ad handling", s.adMode, AdMode.entries, { it.label }, help = adBlurb(s.adMode)) { v -> update { it.copy(adMode = v) } }
             }
             item {
-                Text(adBlurb(s.adMode), style = MaterialTheme.typography.bodySmall, color = Palette.Muted)
+                Text(adBlurb(s.adMode), style = AppType.BodyM, color = Palette.TextTertiary, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
             }
             if (s.adMode != AdMode.OFF) {
                 item {
@@ -257,7 +344,7 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                         TvTextField(newProxy, { newProxy = it; proxyError = null }, "e.g. proxy.example/live/\$channel", onSubmit = ::addProxy)
                     }
                     proxyError?.let { message ->
-                        item(key = "add-proxy-error") { Text(message, style = MaterialTheme.typography.bodySmall, color = Palette.BrandSoft) }
+                        item(key = "add-proxy-error") { Text(message, style = AppType.BodyM, color = Palette.BrandSoft) }
                     }
                     item(key = "add-proxy-buttons") {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -292,7 +379,7 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                         item {
                             Text(
                                 "Enter a host name or address without http:// or a path, and a port from 1 to 65535. Until then this mode only hides ads.",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = AppType.BodyM,
                                 color = Palette.BrandSoft,
                             )
                         }
@@ -348,27 +435,19 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                 AdMode.OFF, AdMode.HIDE -> Unit
             }
 
-            item { Header("Notifications and home screen") }
+            item(key = "h:Notifications and home screen") { Header("Notifications and home screen") }
             item {
-                ToggleRow("Notify when a followed streamer goes live", s.goLiveNotifications) { v ->
+                ToggleRow("Notify when a followed streamer goes live", s.goLiveNotifications, help = NOTIFY_HELP) { v ->
                     update { it.copy(goLiveNotifications = v) }
                 }
             }
             item {
-                ToggleRow("Add a \"Live now\" row to the Android TV home screen", s.homeChannel) { v ->
+                ToggleRow("Add a \"Live now\" row to the Android TV home screen", s.homeChannel, help = NOTIFY_HELP) { v ->
                     update { it.copy(homeChannel = v) }
                 }
             }
-            item {
-                Text(
-                    "Checked about every 15 minutes while the TV is on. The home-screen row only appears on launchers that " +
-                        "support app channels; Google TV's newer home screen may ignore it.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Palette.Muted,
-                )
-            }
 
-            item { Header("Updates") }
+            item(key = "h:Updates") { Header("Updates") }
             item { ToggleRow("Check for updates on launch", s.autoUpdateCheck) { v -> update { it.copy(autoUpdateCheck = v) } } }
             item {
                 ValueRow("Check for updates now", updateState.statusLabel()) {
@@ -379,41 +458,48 @@ private fun SettingsBody(loaded: AppSettings, updates: UpdateViewModel) {
                 }
             }
 
-            item { Header("Remote shortcuts (in the player)") }
+            item(key = "h:Remote shortcuts (in the player)") { Header("Remote shortcuts (in the player)") }
             item {
                 Text(
-                    "OK / Up / Down: controls · Left / Right: hide / show chat (live) or seek ±10 s (VOD)\n" +
+                    "OK / Up / Down: show the controls (Play/Pause first) · Left / Right: hide / show chat (live) or skip ±10 s (videos)\n" +
+                        "In the controls: Down closes them · Up goes to the seek bar on videos (Left / Right to scrub, OK to jump), and Up again closes them\n" +
                         "Red: chat · Green: quality · Yellow: audio-only · Blue: other live channels · Channel +/-: next / previous channel\n" +
                         "Play/Pause, Rewind, Fast-forward · Info or Menu: controls · Back: close menu, then controls, then leave",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = AppType.BodyM,
                     color = Palette.Muted,
+                    modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
 
-            item { Header("Account") }
+            item(key = "h:Account") { Header("Account") }
             item {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                     Text(
                         "Signed in as ${account?.login ?: "—"}",
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = AppType.BodyL,
                         color = Palette.OnBackground,
                     )
                     PillButton("Sign out", { scope.launch { container.session.signOut() } })
                 }
             }
 
-            item { Header("About") }
+            item(key = "h:About") { Header("About") }
             item {
                 Text(
                     "S0undPlus ${BuildConfig.VERSION_NAME}. An unofficial, independent Twitch viewer for Google TV. " +
                         "Not affiliated with or endorsed by Twitch Interactive, Inc. Chat is read-only and anonymous. " +
                         "Twitch doesn't allow third-party apps to follow or unfollow channels, so use twitch.tv or the " +
                         "official app for that (the channel page has a QR code).",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = AppType.BodyM,
                     color = Palette.Muted,
+                    modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
+            }
+          }
         }
+    }
+    Box {
         if (showLanguages) {
             LanguageDialog(
                 current = s.language,
@@ -454,56 +540,6 @@ private fun adBlurb(mode: AdMode): String = when (mode) {
             "hiding the ad."
 }
 
-/** Every broadcast language in one list, with the current one ticked and focused, instead of cycling through them. */
-@OptIn(ExperimentalComposeUiApi::class)
-@Composable
-private fun LanguageDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
-    val focus = remember { FocusRequester() }
-    val listState = rememberLazyListState(TwitchLanguages.ALL.indexOfFirst { it.first == current }.coerceAtLeast(0))
-    BackHandler(onBack = onDismiss)
-    LaunchedEffect(Unit) {
-        try {
-            focus.requestFocus()
-        } catch (_: IllegalStateException) {
-            // the ticked row isn't attached yet; the list is still usable with the D-pad
-        }
-    }
-    Box(Modifier.fillMaxSize().background(Palette.Scrim), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier
-                .testTag("languageDialog")
-                // The D-pad must not wander out to the settings rows behind the scrim.
-                .focusProperties { exit = { FocusRequester.Cancel } }
-                .focusGroup()
-                .fillMaxWidth(0.45f)
-                .heightIn(max = 560.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Palette.Surface)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Language row", style = MaterialTheme.typography.headlineSmall, color = Palette.OnBackground)
-            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(TwitchLanguages.ALL, key = { it.first }) { (code, name) ->
-                    FocusSurface(
-                        { onPick(code) },
-                        Modifier.fillMaxWidth().let { if (code == current) it.focusRequester(focus) else it },
-                        focusedScale = 1.02f,
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(name, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
-                            if (code == current) Text("✓", style = MaterialTheme.typography.titleSmall, color = Palette.BrandSoft)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /**
  * A text field that edits local state and saves it half a second after typing stops, when it loses focus, or when
  * the screen closes, instead of rewriting every setting to disk on each keystroke typed with a TV remote.
@@ -542,38 +578,112 @@ private const val SAVE_DELAY_MS = 500L
 
 @Composable
 private fun Header(text: String) {
-    Text(text, style = MaterialTheme.typography.titleLarge, color = Palette.BrandSoft, modifier = Modifier.padding(top = 16.dp))
+    Text(text, style = AppType.RowTitle, color = Palette.BrandSoft, modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 6.dp))
 }
 
 @Composable
 private fun Label(text: String) {
-    Text(text, style = MaterialTheme.typography.bodyMedium, color = Palette.Muted, modifier = Modifier.padding(bottom = 6.dp))
+    Text(text, style = AppType.BodyM, color = Palette.TextTertiary, modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 6.dp))
 }
 
 @Composable
-private fun ToggleRow(title: String, value: Boolean, onChange: (Boolean) -> Unit) {
-    ValueRow(title, if (value) "On" else "Off") { onChange(!value) }
+private fun ToggleRow(title: String, value: Boolean, modifier: Modifier = Modifier, help: String? = null, onChange: (Boolean) -> Unit) {
+    ValueRow(title, if (value) "On" else "Off", modifier, help, valueColor = if (value) Palette.BrandSoft else Palette.TextTertiary) {
+        onChange(!value)
+    }
 }
 
 /** A row that steps through [options] each time it is clicked. */
 @Composable
-private fun <T> CycleRow(title: String, current: T, options: List<T>, label: (T) -> String, onChange: (T) -> Unit) {
-    ValueRow(title, label(current)) {
+private fun <T> CycleRow(
+    title: String,
+    current: T,
+    options: List<T>,
+    label: (T) -> String,
+    modifier: Modifier = Modifier,
+    help: String? = null,
+    onChange: (T) -> Unit,
+) {
+    ValueRow(title, label(current), modifier, help) {
         val next = options[(options.indexOf(current) + 1).mod(options.size)]
         onChange(next)
     }
 }
 
+/** A setting: its name on the left, its value on the right. Focused, it turns white and the left pane explains it. */
 @Composable
-private fun ValueRow(title: String, value: String, onClick: () -> Unit) {
-    FocusSurface(onClick, Modifier.fillMaxWidth(), focusedScale = 1.02f) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground)
-            Text(value, style = MaterialTheme.typography.titleSmall, color = Palette.BrandSoft)
+private fun ValueRow(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    help: String? = null,
+    valueColor: Color = Palette.BrandSoft,
+    onClick: () -> Unit,
+) {
+    val pane = LocalPane.current
+    ListRowSurface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
+        onFocused = {
+            pane.title = title
+            pane.help = help
+        },
+    ) { focused ->
+        Text(
+            title,
+            style = AppType.Button,
+            color = if (focused) Palette.OnFocusFill else Palette.OnBackground,
+            modifier = Modifier.weight(1f).padding(start = 20.dp, top = 14.dp, bottom = 14.dp, end = 16.dp),
+        )
+        Text(
+            value,
+            style = AppType.BodyM,
+            color = if (focused) Palette.OnFocusFillSecondary else valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 220.dp).padding(end = 20.dp),
+        )
+    }
+}
+
+/**
+ * The left pane: the page title, the sections (the one being browsed is marked) and what the focused row does.
+ * Purely a guide, so it is neither focusable nor part of what accessibility services and tests read (the list holds
+ * every one of these words already).
+ */
+@Composable
+private fun SettingsPane(section: String, pane: PaneState) {
+    Column(
+        Modifier
+            .padding(start = Layout.keyline, top = 32.dp)
+            .width(240.dp)
+            .fillMaxHeight()
+            .clearAndSetSemantics { },
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Settings", style = AppType.Headline, color = Palette.OnBackground, modifier = Modifier.padding(bottom = 12.dp))
+        for (name in SECTIONS) {
+            val current = name == section
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(3.dp).height(16.dp).background(if (current) Palette.Brand else Color.Transparent))
+                Text(
+                    name.substringBefore(" (in"),
+                    style = AppType.BodyM,
+                    color = if (current) Palette.OnBackground else Palette.TextTertiary,
+                    modifier = Modifier.padding(start = 10.dp),
+                    maxLines = 1,
+                )
+            }
+        }
+        val help = pane.help
+        if (help != null) {
+            Text(pane.title, style = AppType.CardTitle, color = Palette.OnBackground, modifier = Modifier.padding(top = 20.dp))
+            Text(help, style = AppType.CardMeta, color = Palette.Muted)
         }
     }
 }
+
+private val SETTINGS_KEYLINE = 150.dp
+
+private const val NOTIFY_HELP = "Checked about every 15 minutes while the TV is on. The home-screen row only appears on " +
+    "launchers that support app channels; Google TV's newer home screen may ignore it."

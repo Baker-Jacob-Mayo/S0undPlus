@@ -7,28 +7,36 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
+import com.s0undplus.tv.ui.theme.AppType
 import com.s0undplus.tv.ui.theme.Palette
+import com.s0undplus.tv.ui.theme.Radius
 
 @Composable
 fun Spinner(modifier: Modifier = Modifier, size: Dp = 48.dp) {
@@ -60,29 +68,36 @@ fun LoadingState(modifier: Modifier = Modifier.fillMaxSize()) {
     }
 }
 
+/** A centred message (empty list, error), optionally with an icon above it and a button below it. */
 @Composable
 fun MessageState(
     message: String,
     modifier: Modifier = Modifier.fillMaxSize(),
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    icon: ImageVector? = null,
 ) {
     Column(
         modifier.padding(48.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (icon != null) Icon(icon, contentDescription = null, tint = Palette.TextTertiary, modifier = Modifier.size(44.dp))
         Text(
             message,
-            style = MaterialTheme.typography.titleMedium,
+            style = AppType.BodyL,
             color = Palette.Muted,
             textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 560.dp),
         )
         if (actionLabel != null && onAction != null) PillButton(actionLabel, onAction)
     }
 }
 
-/** A text button that follows the same focus treatment as every other control. */
+/**
+ * A button: a rounded pill that fills with the brand colour when focused, like every other control. [selected]
+ * marks a toggle that is on (a favourite, the chosen tab).
+ */
 @Composable
 fun PillButton(
     label: String,
@@ -90,20 +105,32 @@ fun PillButton(
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     onFocused: (() -> Unit)? = null,
+    icon: ImageVector? = null,
 ) {
-    FocusSurface(
+    ControlSurface(
         onClick = onClick,
-        modifier = modifier,
-        shape = RoundedCornerShape(50),
-        container = if (selected) Palette.Brand.copy(alpha = 0.35f) else Palette.Surface,
-        focusedScale = 1.08f,
+        modifier = modifier.height(40.dp),
+        container = if (selected) Palette.Brand.copy(alpha = 0.3f) else Palette.SurfaceFocused,
         onFocused = onFocused,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            color = Palette.OnBackground,
-            modifier = Modifier.padding(PaddingValues(horizontal = 18.dp, vertical = 10.dp)),
-        )
+    ) { focused ->
+        val color = when {
+            focused -> Palette.OnBrand
+            selected -> Palette.BrandSoft
+            else -> Palette.OnBackground
+        }
+        Row(
+            Modifier.padding(start = if (icon != null) 16.dp else 20.dp, end = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (icon != null) Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+            Text(label, style = AppType.Button, color = color, maxLines = 1)
+        }
     }
+}
+
+/** A grey placeholder block in the shape of the content that is still loading. Static: no shimmer, no pulse. */
+@Composable
+fun SkeletonBlock(modifier: Modifier, radius: Dp = Radius.card) {
+    Box(modifier.background(Palette.Surface, RoundedCornerShape(radius)))
 }

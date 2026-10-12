@@ -26,11 +26,11 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | | |
 |---|---|
 | **Sign in with your phone** | Twitch device-code login with a QR code — no typing on the TV. Read-only scope (`user:read:follows`). |
-| **Browse** | **Following** (favorites → live now → offline), **Live**, **Language** row, **Categories**, **History**, **Search**. Long-press any card to open the channel page. |
-| **Remembers your place** | Going back from a stream returns to the same tab, scroll position and focused card. |
+| **Browse** | A streaming-service layout: a navigation rail down the left (Search, Following, Live, Language, Categories, History, Settings) that opens over the page when focused. **Following** has a hero describing the focused channel over rows of favorites, live now, continue watching and an offline wall; **Live**, **Language**, **Categories** and **History** are grids; **Search** shows channel and category rows. Long-press any stream card to open the channel page. |
+| **Remembers your place** | Going back from a stream or a channel page returns to the same page, scroll position and focused card. |
 | **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
-| **Channel pages & VODs** | Profile, live status, past broadcasts, highlights and uploads, with **resume where you left off**, plus a **History** tab of what you watched. |
-| **Player** | Media3 HLS on the app's shared OkHttp client, quality picker (best first, source marked) with a remembered preference, audio-only mode, live-edge recovery, **viewer count and uptime**, **seconds behind live with a Jump to live button**, Fit/Fill for 4:3 streams, VOD seeking, touch/swipe gestures (volume, chat, seek). Controls are one row of symbols; the focused one's name shows beneath it. |
+| **Channel pages & VODs** | A show-page layout: the channel's picture, live status and buttons, then shelves of past broadcasts, highlights and uploads, with **resume where you left off** (progress bars), plus **History** and a **Continue watching** row. |
+| **Player** | Media3 HLS on the app's shared OkHttp client, quality picker (best first, source marked) with a remembered preference, audio-only mode, live-edge recovery, **viewer count and uptime**, **seconds behind live with a Jump to live button**, Fit/Fill for 4:3 streams, touch/swipe gestures (volume, chat, seek). YouTube-style controls: a seek bar you can focus and scrub on past broadcasts, with **preview pictures** of the moment you're moving to, one row of buttons (the focused one shows its name) and an Options panel for the rest. |
 | **Frame-rate matching** | On by default: the TV switches to a refresh rate that fits the stream (50 Hz for a 50 fps stream, which judders on 60 Hz), once per stream, and back when you leave. Works even when the TV's own "Match content frame rate" is set to Seamless only, which on most boxes never switches. |
 | **Auto-refresh** | If a stream ends or stalls, the app checks the streamer is still online, then re-requests a fresh playback token and reconnects (normal or aggressive mode, configurable retries and interval). |
 | **Peek view** | Browse other live channels from inside the player without leaving the stream (thumbnails only — no second video decoder). Peek and Channel +/− use your followed live channels; Settings → Playback can add popular ones after them. |
@@ -39,7 +39,7 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | **Chat** | Overlay or beside the video; **Twitch, 7TV, BetterTTV and FrankerFaceZ emotes**, badges, recent history, timestamps, emote/text sizes, deleted-message styling, highlighted `@you` mentions, cheer amounts and reply context. **VOD chat replay** in sync with the video. |
 | **Chat filters** | Hide known bots, `!commands`, blocked words and blocked users. |
 | **Chat on your phone** | QR code that opens the channel's chat on your phone, since TV chat is read-only. |
-| **Live previews** | Optional (off by default): a focused card plays a muted, lowest-quality preview using one shared player. |
+| **Live previews** | Optional (off by default): a focused card plays a muted, low-quality preview using one shared player. |
 | **Go-live notifications** | Optional: checks about every 15 minutes and notifies when a followed channel goes live. Optional Android TV home-screen "Live now" row. |
 | **Themes & extras** | 5 themes, optional world clock, keep-screen-on setting, remote colour-button / channel +/- shortcuts, deep links (`twitch.tv/<login>`, `s0undplus://live/<login>`). |
 | **Ad handling** | **Off by default.** Settings → Ads: hide ads, or get an ad-free copy through proxy URLs, an HTTP proxy, or a different token identity — the same approaches Xtra uses. Read [Ads](#ads) before turning it on. |
@@ -59,7 +59,10 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 
 | Where | Key | Action |
 |---|---|---|
-| Player (overlay hidden) | OK / Up / Down | Show controls |
+| Player (overlay hidden) | OK / Up / Down | Show controls (Play/Pause focused) |
+| Player, controls | Down | Hide the controls |
+| Player, controls (video) | Up, then Left / Right, then OK | Focus the seek bar, scrub with preview pictures (faster while held), jump there; Back cancels, Up again hides the controls |
+| Player, controls (live) | Up | Hide the controls |
 | Player, live | Right / Left | Show / hide chat |
 | Player, VOD | Left / Right | Seek −10 s / +10 s |
 | Player | Play/Pause, Rewind, Fast-forward | As labelled (rewind/FF seek ±30 s on VODs) |
@@ -67,12 +70,16 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | Player | Channel +/− | Next / previous live channel (followed only unless Settings adds popular ones) |
 | Player | Info or Menu | Show controls |
 | Player | Back | Close menu → hide controls → leave the stream (one press each) |
+| Home | Left (from the first card in a row) | Open the navigation rail |
+| Home, rail | Up / Down, then OK or Right | Choose a page (resting on an item for a moment also opens it) |
+| Home | Back | Back to the navigation (the page returns to its top); Back on the navigation leaves the app |
 | Home | long-press OK on a card | Open the channel page (or remove from History) |
-| Anywhere | Back | Previous screen |
+| Anywhere else | Back | Previous screen |
 
-The player's controls, left to right: play/pause (with Back 30 s / Forward 30 s on videos, and Go live when you're behind);
-quality, chat, other channels, audio only, fit/fill, picture-in-picture; then favorite, channel page and chat on your
-phone. Blue (or the other-channels button) opens the peek view.
+The player's controls are laid out like YouTube on TV: a full-width seek bar, and under it one row of round buttons.
+Left to right: play/pause (with back / forward 10 s on videos, and Go live when you're behind), chat, other channels;
+then favorite, channel page and Options. Options holds quality, audio only, picture fit/fill, picture-in-picture and
+chat on your phone. Blue (or the other-channels button) opens the peek view.
 
 ## Setup
 

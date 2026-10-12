@@ -1,5 +1,11 @@
 package com.s0undplus.tv.ui.update
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.SystemUpdateAlt
+import androidx.tv.material3.Icon
+import com.s0undplus.tv.ui.theme.AppType
+import com.s0undplus.tv.ui.theme.Radius
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -250,14 +256,14 @@ fun UpdateBanner(vm: UpdateViewModel, modifier: Modifier = Modifier) {
     Row(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 48.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Palette.Surface)
-            .padding(horizontal = 24.dp, vertical = 12.dp),
+            .clip(RoundedCornerShape(Radius.dialog))
+            .background(Palette.SurfaceRaised)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(message, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground, modifier = Modifier.weight(1f))
+        Icon(Icons.Rounded.SystemUpdateAlt, contentDescription = null, tint = Palette.BrandSoft, modifier = Modifier.size(22.dp))
+        Text(message, style = AppType.BodyM, color = Palette.OnBackground, modifier = Modifier.weight(1f))
         actions()
     }
 }

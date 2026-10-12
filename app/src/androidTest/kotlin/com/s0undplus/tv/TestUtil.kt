@@ -2,6 +2,8 @@ package com.s0undplus.tv
 
 import android.view.KeyEvent
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -71,10 +73,18 @@ fun ComposeTestRule.pressUntilFocused(keyCode: Int, target: SemanticsMatcher, ma
     }
 }
 
-/** Opens the Settings tab of Home with the remote: Right from the first tab, six times. */
+/** The navigation rail down the left of Home, and anything inside it. */
+val inNavRail: SemanticsMatcher = hasAnyAncestor(hasTestTag("navRail"))
+
+/**
+ * Opens Settings with the remote, the way a viewer would: Left from the page onto the navigation rail, Down to
+ * Settings, OK. Settings then has its first row focused.
+ */
 fun ComposeTestRule.openSettingsTab() {
     waitForText("Following")
-    pressRight(6)
+    pressUntilFocused(KeyEvent.KEYCODE_DPAD_LEFT, inNavRail, maxPresses = 12)
+    pressUntilFocused(KeyEvent.KEYCODE_DPAD_DOWN, hasText("Settings") and inNavRail, maxPresses = 8)
+    pressSelect()
     waitForText("Show clock")
 }
 

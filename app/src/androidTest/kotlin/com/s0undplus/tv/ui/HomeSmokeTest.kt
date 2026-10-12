@@ -12,6 +12,8 @@ import com.s0undplus.tv.FailureCapture
 import com.s0undplus.tv.HermeticRule
 import com.s0undplus.tv.MainActivity
 import com.s0undplus.tv.dump
+import com.s0undplus.tv.inNavRail
+import com.s0undplus.tv.waitForNode
 import com.s0undplus.tv.waitForText
 import com.s0undplus.tv.Screenshots
 import com.s0undplus.tv.SignedInRule
@@ -44,13 +46,16 @@ class HomeSmokeTest {
     }
 
     @Test
-    fun dpadDownFromTheTabsMovesFocusOntoAStreamCard() {
+    fun launchFocusesTheFirstStreamAndLeftAndRightGoToTheNavigationAndBack() {
         waitForText("Alpha")
-        press(KeyEvent.KEYCODE_DPAD_DOWN)
-        compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText("Alpha").fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodes(hasText("Alpha") and isFocused()).fetchSemanticsNodes().isNotEmpty()
-        }
+        compose.waitForNode(hasText("Alpha") and isFocused(), description = "the first live card, focused at launch")
         Screenshots.capture("home-card-focused")
+
+        press(KeyEvent.KEYCODE_DPAD_LEFT)
+        compose.waitForNode(hasText("Following") and isFocused() and inNavRail, description = "Following in the navigation")
+        Screenshots.capture("home-nav-open")
+
+        press(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.waitForNode(hasText("Alpha") and isFocused(), description = "back on the card that was focused")
     }
 }

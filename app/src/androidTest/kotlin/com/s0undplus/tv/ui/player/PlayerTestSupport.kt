@@ -2,7 +2,9 @@ package com.s0undplus.tv.ui.player
 
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import com.s0undplus.tv.fake.FakeStreams
-import com.s0undplus.tv.pressDown
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
+import com.s0undplus.tv.waitForNode
 import com.s0undplus.tv.pressSelect
 import com.s0undplus.tv.waitForText
 import com.s0undplus.tv.waitRealTime
@@ -10,7 +12,7 @@ import com.s0undplus.tv.waitRealTime
 /** From Home, opens the first live card (Alpha) with the remote, which starts the player on the fake stream. */
 internal fun ComposeTestRule.openAlphaStream() {
     waitForText("Alpha")
-    pressDown() // from the tab row onto the first stream card
+    waitForNode(hasText("Alpha") and isFocused(), description = "Alpha, focused when Home opens")
     pressSelect()
 }
 

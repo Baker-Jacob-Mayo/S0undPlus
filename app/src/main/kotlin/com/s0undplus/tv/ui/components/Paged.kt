@@ -1,5 +1,12 @@
 package com.s0undplus.tv.ui.components
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.withFrameNanos
+import com.s0undplus.tv.ui.theme.Layout
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,7 +25,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -117,8 +123,13 @@ fun describe(e: Throwable): String = when {
 private const val TAG = "PagedLoader"
 
 /**
- * A responsive grid fed by a [PagedLoader]. Handles first-load spinner, empty and error states, infinite scroll and
- * restoring D-pad focus to [restoreFocusKey] when coming back from another screen.
+ * A grid of [columns] fed by a [PagedLoader], starting at the page keyline. [header] is the first full-width item and
+ * scrolls away with the cards. Handles first-load skeletons, empty and error states, and loading more near the end.
+ *
+ * Focus: [entryRequester] sits on the card focus should go to when the page is entered: the [restoreFocusKey] card if
+ * it is still in the list, otherwise the first card. When the first cards arrive and [focusOnReady] says so, that card
+ * takes focus (a page that was just opened, or coming back from a stream). The grid never takes focus on its own
+ * otherwise, so browsing the navigation past it leaves focus where the viewer put it.
  */
 @Composable
 fun <T : Any> PagedGrid(
@@ -127,9 +138,14 @@ fun <T : Any> PagedGrid(
     emptyText: String,
     itemKey: (T) -> Any,
     modifier: Modifier = Modifier,
-    minCellWidth: Dp = 260.dp,
+    columns: Int = 4,
     restoreFocusKey: Any? = null,
+    entryRequester: FocusRequester? = null,
+    focusOnReady: () -> Boolean = { false },
     onItemFocused: (Any) -> Unit = {},
+    header: (@Composable () -> Unit)? = null,
+    contentType: Any = "card",
+    keyline: Dp = GRID_KEYLINE,
     itemContent: @Composable (item: T, modifier: Modifier) -> Unit,
 ) {
     val state by loader.state.collectAsStateWithLifecycle()
@@ -141,10 +157,13 @@ fun <T : Any> PagedGrid(
     }
 
     if (state.items.isEmpty()) {
-        when {
-            state.loading || (state.loadedAtMillis == 0L && state.error == null) -> LoadingState(modifier)
-            state.error != null -> MessageState(state.error ?: "", modifier, "Try again", loader::refresh)
-            else -> MessageState(emptyText, modifier)
+        Column(modifier.fillMaxSize()) {
+            if (header != null) Box(Modifier.padding(start = Layout.keyline, end = Layout.endMargin, top = 16.dp)) { header() }
+            when {
+                state.loading || (state.loadedAtMillis == 0L && state.error == null) -> GridSkeleton(columns)
+                state.error != null -> MessageState(state.error ?: "", Modifier.fillMaxSize(), "Try again", loader::refresh)
+                else -> MessageState(emptyText, Modifier.fillMaxSize())
+            }
         }
         return
     }
@@ -158,40 +177,70 @@ fun <T : Any> PagedGrid(
     }
     LaunchedEffect(nearEnd, state.items.size) { if (nearEnd) loader.loadMore() }
 
-    var restored by remember(loader) { mutableStateOf(restoreFocusKey == null) }
-    val restoreRequester = remember { FocusRequester() }
-
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minCellWidth),
-        state = gridState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 48.dp, vertical = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        items(state.items, key = { itemKey(it) }) { item ->
-            val key = itemKey(item)
-            val isRestoreTarget = !restored && key == restoreFocusKey
-            val cardModifier = Modifier.fillMaxWidth().let { if (isRestoreTarget) it.focusRequester(restoreRequester) else it }
-            if (isRestoreTarget) {
-                LaunchedEffect(Unit) {
-                    try {
-                        restoreRequester.requestFocus()
-                    } catch (_: IllegalStateException) {
-                        // item not attached yet; the user can simply navigate
-                    }
-                    restored = true
-                }
+    val entryKey = restoreFocusKey?.takeIf { key -> state.items.any { itemKey(it) == key } } ?: itemKey(state.items.first())
+    LaunchedEffect(Unit) {
+        if (entryRequester != null && focusOnReady()) {
+            withFrameNanos { }
+            try {
+                entryRequester.requestFocus()
+            } catch (_: IllegalStateException) {
+                // the card isn't attached yet; the viewer can simply navigate
             }
-            itemContent(item, cardModifier.focusNotifier { onItemFocused(key) })
         }
-        if (state.loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                LoadingState(Modifier.fillMaxWidth().padding(16.dp))
+    }
+
+    KeylineScrolling(keyline) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            state = gridState,
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = Layout.keyline, end = Layout.endMargin, top = 16.dp, bottom = 64.dp),
+            horizontalArrangement = Arrangement.spacedBy(Layout.cardGap),
+            verticalArrangement = Arrangement.spacedBy(Layout.gridLineGap),
+        ) {
+            if (header != null) item(key = "header", span = { GridItemSpan(maxLineSpan) }, contentType = "header") { header() }
+            items(state.items, key = { itemKey(it) }, contentType = { contentType }) { item ->
+                val key = itemKey(item)
+                val cardModifier = Modifier
+                    .fillMaxWidth()
+                    .let { if (entryRequester != null && key == entryKey) it.focusRequester(entryRequester) else it }
+                    .focusNotifier { onItemFocused(key) }
+                itemContent(item, cardModifier)
+            }
+            if (state.loading) {
+                item(span = { GridItemSpan(maxLineSpan) }, contentType = "loading") {
+                    LoadingState(Modifier.fillMaxWidth().padding(16.dp))
+                }
             }
         }
     }
 }
+
+/** Placeholder cards in the grid's shape while its first page loads. */
+@Composable
+fun GridSkeleton(columns: Int, lines: Int = 2) {
+    Column(
+        Modifier.padding(start = Layout.keyline, end = Layout.endMargin, top = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(Layout.gridLineGap),
+    ) {
+        repeat(lines) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Layout.cardGap)) {
+                repeat(columns) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SkeletonBlock(Modifier.fillMaxWidth().aspectRatio(if (columns > 4) 3f / 4f else 16f / 9f))
+                        SkeletonBlock(Modifier.fillMaxWidth(0.6f).height(12.dp), radius = 4.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Where a focused grid line sits, measured from the top of the grid: below the page header (so the first line never
+ * scrolls it away) and low enough that the line above still peeks in.
+ */
+private val GRID_KEYLINE = 140.dp
 
 private const val REFRESH_AGE_MS = 60_000L
 

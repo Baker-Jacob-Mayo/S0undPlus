@@ -1,7 +1,7 @@
 package com.s0undplus.tv.ui.components
 
 import android.content.Context
-import android.view.ViewGroup
+import android.view.TextureView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -20,8 +20,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import com.s0undplus.tv.AppContainer
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Plays a muted, lowest-quality live preview inside whichever card is focused on Home.
+ * Plays a muted, low-quality live preview inside whichever card is focused on Home.
  *
  * Many Google TV chips have only one or two hardware video decoders, so there is exactly **one** preview player, it
  * only runs while a card is focused, it picks the smallest video rung, and it is released when Home goes away (before
@@ -118,16 +116,15 @@ fun PreviewLayer(controller: PreviewController, login: String) {
     DisposableEffect(login) { onDispose { controller.stop(login) } }
 
     if (controller.activeLogin == login) {
+        // A TextureView, not PlayerView's SurfaceView: it scales and clips with the focused card like any other drawing.
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                TextureView(ctx).apply {
                     isFocusable = false
-                    descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                    player = controller.player
+                    controller.player.setVideoTextureView(this)
                 }
             },
+            onRelease = { view -> controller.player.clearVideoTextureView(view) },
             modifier = Modifier.fillMaxSize().alpha(if (controller.readyLogin == login) 1f else 0f),
         )
     }

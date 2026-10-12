@@ -109,12 +109,21 @@ private fun SignedInHost(userId: String, login: String) {
         Route.Home -> HomeScreen(
             vm = home,
             updates = updates,
+            account = login,
             onOpenStream = { nav.push(Route.Play(it.toPlayTarget())) },
-            onOpenCategory = { nav.push(Route.Category(it.id, it.name)) },
+            onOpenCategory = { nav.push(Route.Category(it.id, it.name, it.boxArt(144, 192))) },
             onOpenChannel = { nav.push(Route.Channel(it)) },
             onPlay = { nav.push(Route.Play(it)) },
         )
-        is Route.Category -> EntryScope(nav) { CategoryScreen(route.id, route.name) { nav.push(Route.Play(it.toPlayTarget())) } }
+        is Route.Category -> EntryScope(nav) {
+            CategoryScreen(
+                id = route.id,
+                name = route.name,
+                boxArtUrl = route.boxArtUrl,
+                onOpenStream = { nav.push(Route.Play(it.toPlayTarget())) },
+                onOpenChannel = { nav.push(Route.Channel(it)) },
+            )
+        }
         is Route.Channel -> EntryScope(nav) { ChannelScreen(route.login) { nav.push(Route.Play(it)) } }
         // Keyed by target so switching channel (peek, channel +/-, raids) builds a fresh player, chat and sockets.
         is Route.Play -> key(route.target) {

@@ -73,6 +73,8 @@ data class User(
     @SerialName("profile_image_url") val profileImageUrl: String = "",
     val description: String = "",
     @SerialName("broadcaster_type") val broadcasterType: String = "",
+    /** The picture Twitch shows on the channel while it is offline; often empty. */
+    @SerialName("offline_image_url") val offlineImageUrl: String = "",
 )
 
 /** The kinds of saved video Helix can list for a channel. */

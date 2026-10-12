@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -91,7 +92,9 @@ import com.s0undplus.twitch.playback.Variant
 import com.s0undplus.twitch.playback.QualityPreference
 import com.s0undplus.twitch.playback.RefreshMode
 import com.s0undplus.twitch.playback.RefreshStep
+import com.s0undplus.twitch.playback.SeekPreviews
 import com.s0undplus.twitch.playback.StallDetector
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -102,7 +105,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import android.view.KeyEvent as AndroidKeyEvent
 
-private enum class Menu { None, Quality, Peek }
+private enum class Menu { None, Options, Quality, Peek }
 
 private const val SEEK_SMALL_MS = 10_000L
 private const val SEEK_LARGE_MS = 30_000L
@@ -197,6 +200,18 @@ fun PlayerScreen(
     var flashMessage by remember { mutableStateOf<String?>(null) }
     var endedNote by remember { mutableStateOf<String?>(null) }
     var showChatQr by remember { mutableStateOf(false) }
+
+    // Twitch's preview pictures along a past broadcast, for scrubbing; without them the seek bar just shows the time.
+    val seekPreviews by produceState<SeekPreviews?>(null, target) {
+        val vod = target as? PlayTarget.Vod ?: return@produceState
+        value = try {
+            container.seekPreviews.load(vod.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
     var raidSeconds by remember { mutableIntStateOf(RAID_COUNTDOWN_SECONDS) }
 
     val recoveryJob = remember { arrayOfNulls<Job>(1) }
@@ -211,6 +226,8 @@ fun PlayerScreen(
 
     val rootFocus = remember { FocusRequester() }
     val firstControl = remember { FocusRequester() }
+    val seekBar = remember { FocusRequester() }
+    val firstOptionItem = remember { FocusRequester() }
     val selectedQualityItem = remember { FocusRequester() }
     val firstPeekItem = remember { FocusRequester() }
 
@@ -559,6 +576,7 @@ fun PlayerScreen(
     LaunchedEffect(controlsVisible, menu) {
         try {
             when {
+                menu == Menu.Options -> firstOptionItem.requestFocus()
                 menu == Menu.Quality -> selectedQualityItem.requestFocus()
                 menu == Menu.Peek -> firstPeekItem.requestFocus()
                 controlsVisible -> firstControl.requestFocus()
@@ -799,27 +817,23 @@ fun PlayerScreen(
                 title = headerTitle,
                 isLive = isLive,
                 playing = playing,
-                qualityLabel = qualityLabel,
                 chatOn = settings.chatVisible,
-                audioOnly = audioOnly,
-                pipSupported = bridge.pipSupported,
                 isFavorite = isFavorite,
                 showClock = settings.showClock,
                 info = streamInfo,
                 latencyMs = latencyMs,
-                zoom = settings.zoomVideo,
                 positionMs = positionMs,
                 durationMs = durationMs,
+                seekPreviews = seekPreviews,
                 firstControl = firstControl,
+                seekBar = seekBar,
                 onPlayPause = ::togglePlayback,
                 onSeek = ::seekBy,
-                onQuality = { menu = Menu.Quality },
-                onChat = ::toggleChat,
-                onAudioOnly = { audioOnly = !audioOnly },
-                onPip = {
-                    controlsVisible = false
-                    bridge.enterPip()
+                onSeekTo = { ms ->
+                    exo.seekTo(ms)
+                    positionMs = ms
                 },
+                onChat = ::toggleChat,
                 onPeek = ::openPeek,
                 onFavorite = {
                     val display = when (target) {
@@ -830,14 +844,36 @@ fun PlayerScreen(
                     uiScope.launch { container.settings.toggleFavorite(FavoriteChannel(channelLogin, display, id)) }
                 },
                 onChannel = { onOpenChannel(channelLogin) },
-                onChatOnPhone = { showChatQr = true },
-                onZoom = { uiScope.launch { container.settings.update { it.copy(zoomVideo = !it.zoomVideo) } } },
+                onOptions = { menu = Menu.Options },
                 onJumpToLive = {
                     exo.seekToDefaultPosition()
                     exo.play()
                     controlsVisible = false
                 },
+                onClose = { controlsVisible = false },
                 headerEndInset = if (chatShown) CHAT_WIDTH else 0.dp,
+            )
+        }
+        if (menu == Menu.Options && !bridge.inPip) {
+            OptionsSheet(
+                qualityLabel = qualityLabel,
+                audioOnly = audioOnly,
+                zoom = settings.zoomVideo,
+                pipSupported = bridge.pipSupported,
+                firstItem = firstOptionItem,
+                modifier = Modifier.align(Alignment.CenterEnd),
+                onQuality = { menu = Menu.Quality },
+                onAudioOnly = { audioOnly = !audioOnly },
+                onZoom = { uiScope.launch { container.settings.update { it.copy(zoomVideo = !it.zoomVideo) } } },
+                onPip = {
+                    menu = Menu.None
+                    controlsVisible = false
+                    bridge.enterPip()
+                },
+                onChatOnPhone = {
+                    menu = Menu.None
+                    showChatQr = true
+                },
             )
         }
         if (menu == Menu.Quality && ready != null) {

@@ -29,7 +29,7 @@ sealed interface PlayTarget {
 
 sealed interface Route {
     data object Home : Route
-    data class Category(val id: String, val name: String) : Route
+    data class Category(val id: String, val name: String, val boxArtUrl: String = "") : Route
     data class Channel(val login: String) : Route
     data class Play(val target: PlayTarget) : Route
 }
