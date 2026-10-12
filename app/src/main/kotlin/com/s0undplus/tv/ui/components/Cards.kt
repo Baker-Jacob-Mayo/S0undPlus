@@ -40,6 +40,8 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import com.s0undplus.tv.LocalAppContainer
+import com.s0undplus.tv.data.FollowSource
 import com.s0undplus.tv.ui.theme.AppType
 import com.s0undplus.tv.ui.theme.Layout
 import com.s0undplus.tv.ui.theme.Palette
@@ -157,7 +159,8 @@ fun StreamCard(
             val overlay = focused && showTitleOnFocus && stream.title.isNotBlank()
             if (overlay) {
                 Box(Modifier.fillMaxSize().background(bottomShade))
-                Column(Modifier.align(Alignment.BottomStart).padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // Clear of the follow badge in the bottom-right corner.
+                Column(Modifier.align(Alignment.BottomStart).padding(start = 8.dp, end = 34.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(stream.title, style = AppType.CardMeta, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val uptime = Format.uptime(stream.startedAt)
                     Text(
@@ -172,6 +175,7 @@ fun StreamCard(
             }
             LiveBadge(Modifier.align(Alignment.TopStart).padding(6.dp))
             if (isFavorite) FavoriteMark(Modifier.align(Alignment.TopEnd).padding(6.dp))
+            FollowSourceBadge(stream.userLogin, Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp))
         },
         text = { focused ->
             CardName(stream.userName, focused)
@@ -214,6 +218,7 @@ fun OfflineChannelCard(
     modifier: Modifier = Modifier,
     onFocused: (() -> Unit)? = null,
     isFavorite: Boolean = false,
+    login: String? = null,
 ) {
     MediaCard(
         onClick = onClick,
@@ -226,6 +231,7 @@ fun OfflineChannelCard(
                 contentAlignment = Alignment.Center,
             ) { Avatar(avatarUrl, name, Modifier.size(56.dp)) }
             if (isFavorite) FavoriteMark(Modifier.align(Alignment.TopEnd).padding(6.dp))
+            if (login != null) FollowSourceBadge(login, Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp))
         },
         text = { focused ->
             CardName(name, focused)
@@ -248,7 +254,10 @@ fun AvatarTile(
     subtitle: String? = null,
     onFocused: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    login: String? = null,
 ) {
+    // The follow badge sits on the circle's edge, at the lower right, so it is drawn outside the picture's clip.
+    val source = login?.let { LocalAppContainer.current.follows.sourceOf(it) }
     MediaCard(
         onClick = onClick,
         imageModifier = Modifier.size(Layout.avatar),
@@ -269,6 +278,35 @@ fun AvatarTile(
         text = { focused ->
             CardName(name, focused, center = true)
             if (subtitle != null) CardMeta(subtitle, center = true, color = if (live) Palette.LiveText else Palette.TextTertiary)
+        },
+        overlay = source?.let { s ->
+            { FollowBadge(s, Modifier.align(Alignment.TopStart).offset(55.dp, 55.dp).size(27.dp), ring = Palette.Background) }
+        },
+    )
+}
+
+/**
+ * A followed category in a row of stream cards: its box art on a darkened copy of itself, so it has the cards' shape.
+ * Categories can only be followed in this app (Twitch doesn't tell apps which ones the account follows), so the badge
+ * is always the plus.
+ */
+@Composable
+fun CategoryTile(category: Category, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null) {
+    val art = category.boxArt(270, 360)
+    MediaCard(
+        onClick = onClick,
+        imageModifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+        modifier = modifier,
+        onFocused = onFocused,
+        image = {
+            CardImage(art)
+            Box(Modifier.fillMaxSize().background(Color(0xA8000000)))
+            CardImage(art, Modifier.align(Alignment.Center).fillMaxHeight(0.82f).aspectRatio(3f / 4f).clip(RoundedCornerShape(4.dp)))
+            FollowBadge(FollowSource.APP, Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp))
+        },
+        text = { focused ->
+            CardName(category.name, focused)
+            CardMeta("Category")
         },
     )
 }

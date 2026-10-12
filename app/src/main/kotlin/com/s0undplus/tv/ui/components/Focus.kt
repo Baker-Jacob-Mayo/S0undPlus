@@ -153,6 +153,8 @@ fun MediaCard(
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     image: @Composable BoxScope.(focused: Boolean) -> Unit,
     text: @Composable ColumnScope.(focused: Boolean) -> Unit = {},
+    /** Drawn over the picture but outside its clip, and grown with it (a badge sitting on an avatar's edge). */
+    overlay: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale = focusScale(focused, focusedScale)
@@ -161,19 +163,34 @@ fun MediaCard(
         horizontalAlignment = horizontalAlignment,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            imageModifier
-                // The ring is drawn outside the picture's layer (so it isn't clipped), grown by the same scale.
-                .focusRing(focused, ringRadius, circle = circle, scale = scale)
-                // One layer does both the focus scale and the rounded clip.
-                .graphicsLayer {
-                    scaleX = scale()
-                    scaleY = scale()
-                    this.shape = shape
-                    clip = true
-                }
-                .background(Palette.Surface),
-        ) { image(focused) }
+        if (overlay == null) {
+            Box(
+                imageModifier
+                    // The ring is drawn outside the picture's layer (so it isn't clipped), grown by the same scale.
+                    .focusRing(focused, ringRadius, circle = circle, scale = scale)
+                    // One layer does both the focus scale and the rounded clip.
+                    .graphicsLayer {
+                        scaleX = scale()
+                        scaleY = scale()
+                        this.shape = shape
+                        clip = true
+                    }
+                    .background(Palette.Surface),
+            ) { image(focused) }
+        } else {
+            // The scale on an outer layer, the clip on the picture alone, so the overlay can reach past its edge.
+            Box(
+                imageModifier
+                    .focusRing(focused, ringRadius, circle = circle, scale = scale)
+                    .graphicsLayer {
+                        scaleX = scale()
+                        scaleY = scale()
+                    },
+            ) {
+                Box(Modifier.matchParentSize().clip(shape).background(Palette.Surface)) { image(focused) }
+                overlay()
+            }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { text(focused) }
     }
 }

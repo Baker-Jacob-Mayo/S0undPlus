@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -108,7 +109,10 @@ fun NavRail(
     Box(
         modifier
             .fillMaxHeight()
-            .width(Layout.railExpanded)
+            // Laid out at its closed width; open, it draws past that edge. Focus search measures the rail by this box:
+            // as wide as the open rail, it would reach past narrow cards in the first column (category posters), and
+            // Left from those would find nothing to its left.
+            .width(Layout.railCollapsed)
             // The content to the right dims while the rail is open; when closed, a narrow fade keeps the icons
             // readable over pictures sliding underneath.
             .drawBehind {
@@ -179,7 +183,8 @@ fun NavRail(
                             false
                         }
                     }
-                    .clickable {
+                    // The item draws its own focused pill; the default overlay would only cover its closed width.
+                    .clickable(interactionSource = null, indication = null) {
                         settleJob?.cancel()
                         onEnter(tab)
                     },
@@ -197,7 +202,7 @@ private fun BoxScope.Brand(open: Float, account: String) {
         color = Palette.Brand,
         modifier = Modifier.offset(x = 26.dp, y = 30.dp).graphicsLayer { alpha = 1f - open },
     )
-    Column(Modifier.offset(x = 28.dp, y = 30.dp).graphicsLayer { alpha = open }) {
+    Column(Modifier.offset(x = 28.dp, y = 30.dp).wrapContentWidth(Alignment.Start, unbounded = true).graphicsLayer { alpha = open }) {
         Text("S0und+", style = AppType.Wordmark, color = Palette.Brand)
         Text(account, style = AppType.CardMeta, color = Palette.TextTertiary, maxLines = 1)
     }
@@ -222,6 +227,7 @@ private fun RailItem(
         modifier
             .semantics { this.selected = selected }
             .height(ITEM_HEIGHT.dp)
+            .wrapContentWidth(Alignment.Start, unbounded = true)
             .width((48 + (216 - 48) * open).dp)
             .background(if (focused) Palette.Brand else Color.Transparent, RoundedCornerShape(22.dp)),
     ) {

@@ -272,7 +272,12 @@ class PlayerController(
                 // In the followed list's own order, the channel on screen included: Channel +/- steps from its place.
                 // The list must not depend on which channel is on screen, or Channel +/- would step through a
                 // different order on every channel it lands on.
-                val followed = c.helix.followedStreams(first = 40).items
+                // Followed means on the Twitch account or in this app: both, most viewers first.
+                val twitch = c.helix.followedStreams(first = 40).items
+                val listed = twitch.map { it.userLogin.lowercase() }.toSet()
+                val appOnly = c.follows.channels.value.map { it.login.lowercase() }.filterNot { it in listed }
+                val app = appOnly.chunked(100).flatMap { c.helix.streamsByLogins(it) }
+                val followed = (twitch + app).distinctBy { it.userId }.sortedByDescending { it.viewerCount }
                 _others.value = when (c.settings.settings.first().otherChannels) {
                     OtherChannels.FOLLOWED -> followed
                     OtherChannels.FOLLOWED_AND_POPULAR -> (followed + c.helix.streams(first = 20).items).distinctBy { it.userId }

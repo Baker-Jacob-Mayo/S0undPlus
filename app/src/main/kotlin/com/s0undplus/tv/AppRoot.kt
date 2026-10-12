@@ -73,6 +73,12 @@ private fun SignedInHost(userId: String, login: String) {
     val updates = viewModel(key = "updates-$userId") { UpdateViewModel(appContext, container) }
 
     LaunchedEffect(Unit) { updates.checkOnLaunch() }
+    // The follow badges need the whole list of this account's Twitch follows (and never another account's).
+    LaunchedEffect(userId) {
+        container.follows.clearTwitch()
+        container.follows.refreshTwitch(force = true)
+        container.follows.refreshNames()
+    }
 
     // Links (notification taps, TV home row, twitch.tv URLs) wait here until the viewer is signed in and Home exists.
     val link = bridge.pendingLink
@@ -111,7 +117,7 @@ private fun SignedInHost(userId: String, login: String) {
             updates = updates,
             account = login,
             onOpenStream = { nav.push(Route.Play(it.toPlayTarget())) },
-            onOpenCategory = { nav.push(Route.Category(it.id, it.name, it.boxArt(144, 192))) },
+            onOpenCategory = { nav.push(Route.Category(it.id, it.name, it.boxArtUrl)) },
             onOpenChannel = { nav.push(Route.Channel(it)) },
             onPlay = { nav.push(Route.Play(it)) },
         )

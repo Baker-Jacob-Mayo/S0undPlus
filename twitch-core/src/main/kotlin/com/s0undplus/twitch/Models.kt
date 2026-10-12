@@ -122,6 +122,14 @@ internal data class BadgeVersionDto(
  * Helix thumbnails/box art contain `{width}x{height}` placeholders; video thumbnails use `%{width}x%{height}`, with
  * percent signs. The percent forms go first, otherwise `%{width}` would become `%440`.
  */
+/**
+ * Box art as Twitch's size template. `search/categories` answers with a fixed 52x72 picture where `games/top` gives
+ * the `{width}x{height}` template; this turns the one into the other, so either can be sized (or stored and sized later).
+ */
+fun boxArtTemplate(url: String): String = if ("{width}" in url) url else FIXED_SIZE.replace(url, "-{width}x{height}$1")
+
+private val FIXED_SIZE = Regex("""-\d+x\d+(\.\w+)$""")
+
 internal fun String.sized(width: Int, height: Int): String =
     replace("%{width}", width.toString())
         .replace("%{height}", height.toString())

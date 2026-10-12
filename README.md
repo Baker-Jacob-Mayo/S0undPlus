@@ -26,8 +26,9 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 | | |
 |---|---|
 | **Sign in with your phone** | Twitch device-code login with a QR code — no typing on the TV. Read-only scope (`user:read:follows`). |
-| **Browse** | A streaming-service layout: a navigation rail down the left (Search, Following, Live, Language, Categories, History, Settings) that opens over the page when focused. **Following** has a hero describing the focused channel over rows of favorites, live now, continue watching and an offline wall; **Live**, **Language**, **Categories** and **History** are grids; **Search** shows channel and category rows. Long-press any stream card to open the channel page. |
+| **Browse** | A streaming-service layout: a navigation rail down the left (Search, Following, Live, Language, Categories, History, Settings) that opens over the page when focused. **Following** has a hero describing the focused channel over rows of favorites, live now (followed channels, then followed categories), continue watching and an offline wall; **Live**, **Language**, **Categories** and **History** are grids; **Search** shows channel and category rows. Long-press any stream card to open the channel page. |
 | **Remembers your place** | Going back from a stream or a channel page returns to the same page, scroll position and focused card. |
+| **Follow in the app** | Follow channels and categories from their pages, kept in the app alongside your Twitch account's follows: they're in Following, Channel +/−, peek and go-live notifications like the rest. Followed categories sit after the live channels in Live now. Every channel card shows where it's followed with a small badge at the lower right: Twitch's mark (your Twitch account), a plus (this app), or the two split across the corner (both). |
 | **Favorites** | Star channels (player controls or channel page); they're pinned at the top of Following, live or not. |
 | **Channel pages & VODs** | A show-page layout: the channel's picture, live status and buttons, then shelves of past broadcasts, highlights and uploads, with **resume where you left off** (progress bars), plus **History** and a **Continue watching** row. |
 | **Player** | Media3 HLS on the app's shared OkHttp client, quality picker (best first, source marked) with a remembered preference, audio-only mode, live-edge recovery, **viewer count and uptime**, **seconds behind live with a Jump to live button**, Fit/Fill for 4:3 streams, touch/swipe gestures (volume, chat, seek). YouTube-style controls: a seek bar you can focus and scrub on past broadcasts, with **preview pictures** of the moment you're moving to, one row of buttons (the focused one shows its name) and an Options panel for the rest. |
@@ -47,8 +48,9 @@ Everything in S0undTV's feature list is here except where noted in [What's diffe
 
 ### What's different from S0undTV
 
-- **Follow / unfollow isn't possible.** Twitch removed the follow API for third-party apps in July 2021 and offers no
-  replacement. S0undPlus gives you local **favorites** and a **"Follow on Twitch" QR code** on each channel page instead.
+- **Following on your Twitch account isn't possible.** Twitch removed the follow API for third-party apps in July 2021
+  and offers no replacement. S0undPlus follows channels and categories **in the app** instead, and each channel page has a
+  **"Follow on Twitch" QR code** that opens the channel on your phone. Channels followed on Twitch are unfollowed there.
 - **Chat is read-only** (anonymous). Use the "Chat on phone" QR code to talk.
 - **"Recommendation channels"** are implemented as an Android TV home-screen row. Launchers that don't support app
   channels (Google TV's newer home screen may not) will never show it.
@@ -165,7 +167,7 @@ twitch-core/   Plain Kotlin/JVM library (included build) — all Twitch protocol
                VOD chat API + VodChatReplay (seek-aware buffering)
   eventsub/    RaidWatcher over the official EventSub WebSocket
   update/      GitHub-release update checker + version comparison
-  library/     bounded favorites / watch-history operations
+  library/     bounded favorites, app follows and watch-history operations
   (root)       AutoRefresh policy + stall detector, DeepLinkParser, languages
 app/           Android TV app — Compose for TV UI, Media3 player, DataStore persistence
 ```

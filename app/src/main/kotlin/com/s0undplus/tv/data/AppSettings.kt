@@ -14,7 +14,9 @@ import com.s0undplus.twitch.TwitchLanguages
 import com.s0undplus.twitch.auth.AuthTokens
 import com.s0undplus.twitch.auth.TokenStore
 import com.s0undplus.twitch.chat.ChatFilter
+import com.s0undplus.twitch.library.AppFollow
 import com.s0undplus.twitch.library.FavoriteChannel
+import com.s0undplus.twitch.library.FollowedCategory
 import com.s0undplus.twitch.library.HistoryEntry
 import com.s0undplus.twitch.library.LibraryOps
 import com.s0undplus.twitch.playback.HttpProxy
@@ -171,6 +173,8 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val tokens = stringPreferencesKey("auth_tokens")
         val favorites = stringPreferencesKey("favorites")
+        val appFollows = stringPreferencesKey("app_follows")
+        val followedCategories = stringPreferencesKey("followed_categories")
         val history = stringPreferencesKey("history")
         val lastLive = stringPreferencesKey("last_live_logins")
 
@@ -257,6 +261,36 @@ class SettingsRepository(private val context: Context) {
 
     val history: Flow<List<HistoryEntry>> =
         context.dataStore.data.map { LibraryOps.decodeHistory(it[Keys.history]) }
+
+    /** Channels followed in this app (Twitch no longer lets apps follow on the account itself). */
+    val appFollows: Flow<List<AppFollow>> =
+        context.dataStore.data.map { LibraryOps.decodeFollows(it[Keys.appFollows]) }
+
+    val followedCategories: Flow<List<FollowedCategory>> =
+        context.dataStore.data.map { LibraryOps.decodeCategories(it[Keys.followedCategories]) }
+
+    suspend fun toggleAppFollow(channel: AppFollow) {
+        context.dataStore.edit { prefs ->
+            val updated = LibraryOps.toggleFollow(LibraryOps.decodeFollows(prefs[Keys.appFollows]), channel)
+            prefs[Keys.appFollows] = LibraryOps.encodeFollows(updated)
+        }
+    }
+
+    /** Rewrites the app follows with [transform]; nothing is written when it hands back the same list. */
+    suspend fun updateAppFollows(transform: (List<AppFollow>) -> List<AppFollow>) {
+        context.dataStore.edit { prefs ->
+            val current = LibraryOps.decodeFollows(prefs[Keys.appFollows])
+            val updated = transform(current)
+            if (updated !== current) prefs[Keys.appFollows] = LibraryOps.encodeFollows(updated)
+        }
+    }
+
+    suspend fun toggleCategoryFollow(category: FollowedCategory) {
+        context.dataStore.edit { prefs ->
+            val updated = LibraryOps.toggleCategory(LibraryOps.decodeCategories(prefs[Keys.followedCategories]), category)
+            prefs[Keys.followedCategories] = LibraryOps.encodeCategories(updated)
+        }
+    }
 
     suspend fun toggleFavorite(channel: FavoriteChannel) {
         context.dataStore.edit { prefs ->

@@ -22,6 +22,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Star
@@ -67,6 +69,7 @@ import com.s0undplus.tv.ui.components.PagedGrid
 import com.s0undplus.tv.ui.components.PagedLoader
 import com.s0undplus.tv.ui.components.PillButton
 import com.s0undplus.tv.ui.components.QrDialog
+import com.s0undplus.tv.ui.components.RoundIconButton
 import com.s0undplus.tv.ui.components.SkeletonBlock
 import com.s0undplus.tv.ui.components.StreamCard
 import com.s0undplus.tv.ui.components.VideoCard
@@ -81,11 +84,16 @@ import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.theme.Radius
 import com.s0undplus.tv.ui.util.Format
 import com.s0undplus.tv.ui.util.rememberScreenScope
+import com.s0undplus.twitch.Category
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
 import com.s0undplus.twitch.VideoType
+import com.s0undplus.twitch.boxArtTemplate
+import com.s0undplus.twitch.library.AppFollow
 import com.s0undplus.twitch.library.FavoriteChannel
+import com.s0undplus.twitch.library.FollowedCategory
+import com.s0undplus.twitch.library.LibraryOps
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -108,6 +116,8 @@ class CategoryViewModel(c: AppContainer, id: String) : ViewModel() {
 fun CategoryScreen(id: String, name: String, boxArtUrl: String, onOpenStream: (Stream) -> Unit, onOpenChannel: (String) -> Unit) {
     val container = LocalAppContainer.current
     val vm = viewModel(key = "category-$id") { CategoryViewModel(container, id) }
+    val followedCategories by container.follows.categories.collectAsStateWithLifecycle()
+    val followed = followedCategories.any { it.id == id }
     val entry = remember { FocusRequester() }
     PagedGrid(
         loader = vm.loader,
@@ -124,11 +134,23 @@ fun CategoryScreen(id: String, name: String, boxArtUrl: String, onOpenStream: (S
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 if (boxArtUrl.isNotBlank()) {
                     CardImage(
-                        boxArtUrl,
+                        Category(id, name, boxArtUrl).boxArt(144, 192),
                         Modifier.width(72.dp).aspectRatio(3f / 4f).clip(RoundedCornerShape(Radius.card)),
                     )
                 }
-                PageHeader(name, "Live channels, most viewers first  ·  Hold OK on a stream for its channel", Modifier.weight(1f))
+                PageHeader(
+                    name,
+                    "Live channels, most viewers first  ·  Hold OK on a stream for its channel",
+                    Modifier.weight(1f),
+                    action = {
+                        PillButton(
+                            if (followed) "Following" else "Follow",
+                            { container.follows.toggle(FollowedCategory(id, name, boxArtTemplate(boxArtUrl))) },
+                            selected = followed,
+                            icon = if (followed) Icons.Rounded.Check else Icons.Rounded.Add,
+                        )
+                    },
+                )
             }
         },
     ) { stream, modifier ->
@@ -225,6 +247,10 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
     val state by controller.state.collectAsStateWithLifecycle()
     val favorites by container.settings.favorites.collectAsStateWithLifecycle(emptyList())
     var showFollowQr by remember { mutableStateOf(false) }
+    // Opened from the Follow button of a channel followed on Twitch: the dialog then says how to unfollow there.
+    var qrFromFollow by remember { mutableStateOf(false) }
+    val appChannels by container.follows.channels.collectAsStateWithLifecycle()
+    val followPill = remember { FocusRequester() }
     val firstFocus = remember { FocusRequester() }
     val followButton = remember { FocusRequester() }
     val restoreFocus = remember { FocusRequester() }
@@ -254,6 +280,10 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
         is ChannelState.Failed -> MessageState(s.message, actionLabel = "Try again", onAction = controller::load)
         is ChannelState.Loaded -> Box(Modifier.fillMaxSize()) {
             val isFavorite = favorites.any { it.login.equals(s.user.login, ignoreCase = true) }
+            // By id: a follow made before the channel changed its name still counts (and is renamed here).
+            val appFollowed = LibraryOps.isFollowed(appChannels, s.user.login, s.user.id)
+            LaunchedEffect(s.user.id) { container.follows.noteUser(s.user) }
+            val twitchFollowed = s.user.login.lowercase() in container.follows.twitchLogins
             KeylineScrolling(SHELF_KEYLINE) {
                 LazyColumn(
                     state = vm.listState,
@@ -278,9 +308,23 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
                             onFavorite = {
                                 scope.launch { container.settings.toggleFavorite(FavoriteChannel(s.user.login, s.user.displayName, s.user.id)) }
                             },
-                            onFollowQr = { showFollowQr = true },
+                            onFollowQr = {
+                                qrFromFollow = false
+                                showFollowQr = true
+                            },
+                            appFollowed = appFollowed,
+                            twitchFollowed = twitchFollowed,
+                            onFollow = {
+                                if (!appFollowed && twitchFollowed) {
+                                    qrFromFollow = true
+                                    showFollowQr = true
+                                } else {
+                                    container.follows.toggle(AppFollow(s.user.login, s.user.displayName, s.user.id))
+                                }
+                            },
                             firstFocus = firstFocus,
                             followButton = followButton,
+                            followPill = followPill,
                         )
                       }
                     }
@@ -312,12 +356,17 @@ fun ChannelScreen(login: String, onPlay: (PlayTarget) -> Unit) {
             }
             if (showFollowQr) {
                 QrDialog(
-                    title = "Follow ${s.user.displayName}",
-                    subtitle = "Twitch doesn't let third-party apps follow channels. Scan to open the channel on your phone, " +
-                        "then tap Follow — it will show up in your Following page.",
+                    title = if (twitchFollowed) "${s.user.displayName} on Twitch" else "Follow ${s.user.displayName} on Twitch",
+                    subtitle = if (twitchFollowed) {
+                        "You follow ${s.user.displayName} on your Twitch account, so that's where to unfollow. Scan to open " +
+                            "the channel on your phone."
+                    } else {
+                        "Follow here to keep the channel in this app only. To follow on your Twitch account too, scan to " +
+                            "open the channel on your phone and tap Follow."
+                    },
                     url = "https://www.twitch.tv/${s.user.login}",
                     onDismiss = { showFollowQr = false },
-                    returnFocus = followButton,
+                    returnFocus = if (qrFromFollow) followPill else followButton,
                 )
             }
         }
@@ -362,8 +411,12 @@ private fun ChannelHeader(
     onWatch: () -> Unit,
     onFavorite: () -> Unit,
     onFollowQr: () -> Unit,
+    appFollowed: Boolean,
+    twitchFollowed: Boolean,
+    onFollow: () -> Unit,
     firstFocus: FocusRequester,
     followButton: FocusRequester,
+    followPill: FocusRequester,
 ) {
     Column(
         Modifier.fillMaxWidth().padding(start = Layout.keyline, top = 48.dp, end = Layout.endMargin),
@@ -410,14 +463,25 @@ private fun ChannelHeader(
         }
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (stream != null) PillButton("Watch live", onWatch, Modifier.focusRequester(firstFocus), icon = Icons.Rounded.PlayArrow)
+            // Follow keeps the channel in this app. One followed on the Twitch account says so, and leads to Twitch.
+            PillButton(
+                when {
+                    appFollowed -> "Following"
+                    twitchFollowed -> "Following on Twitch"
+                    else -> "Follow"
+                },
+                onFollow,
+                Modifier.focusRequester(followPill).let { if (stream == null) it.focusRequester(firstFocus) else it },
+                selected = appFollowed,
+                icon = if (appFollowed || twitchFollowed) Icons.Rounded.Check else Icons.Rounded.Add,
+            )
             PillButton(
                 if (isFavorite) "Favorite" else "Add to favorites",
                 onFavorite,
-                if (stream == null) Modifier.focusRequester(firstFocus) else Modifier,
                 selected = isFavorite,
                 icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
             )
-            PillButton("Follow on Twitch", onFollowQr, Modifier.focusRequester(followButton), icon = Icons.Rounded.QrCode2)
+            RoundIconButton(Icons.Rounded.QrCode2, "Follow on Twitch", onFollowQr, Modifier.focusRequester(followButton))
         }
     }
 }

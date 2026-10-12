@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -38,16 +39,19 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.ui.theme.AppType
 import com.s0undplus.tv.ui.theme.Layout
 import com.s0undplus.tv.ui.theme.Motion
 import com.s0undplus.tv.ui.theme.Palette
 import com.s0undplus.tv.ui.theme.Radius
 import com.s0undplus.tv.ui.util.Format
+import com.s0undplus.twitch.Category
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.TwitchLanguages
 import com.s0undplus.twitch.library.HistoryEntry
 import androidx.compose.runtime.withFrameNanos
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -66,6 +70,9 @@ sealed interface HeroModel {
     ) : HeroModel
 
     data class Vod(val entry: HistoryEntry, override val section: String) : HeroModel
+
+    /** A category followed in the app, shown among the followed channels. */
+    data class CategoryItem(val category: Category, override val section: String) : HeroModel
 }
 
 /**
@@ -82,6 +89,9 @@ class HeroState {
     /** What the backdrop shows: follows [shown] one frame later, so the text and the picture don't change in the same frame. */
     var backdrop by mutableStateOf<HeroModel?>(null)
         private set
+
+    /** Each category's top stream when it was last looked up, so moving back and forth doesn't ask Twitch again. */
+    internal val topStreams = HashMap<String, Pair<Long, Stream?>>()
 
     /** Forgets what was shown, so the page shows its first card again (Back to the navigation). */
     fun reset() {
@@ -169,6 +179,17 @@ fun HeroBackdrop(state: HeroState, modifier: Modifier = Modifier) {
                         .clip(RoundedCornerShape(Radius.row)),
                 )
             }
+            is HeroModel.CategoryItem -> {
+                Box(Modifier.fillMaxSize().background(wash()))
+                CardImage(
+                    model.category.boxArt(270, 360),
+                    Modifier
+                        .align(Alignment.Center)
+                        .offset(x = 60.dp, y = (-20).dp)
+                        .size(132.dp, 176.dp)
+                        .clip(RoundedCornerShape(Radius.card)),
+                )
+            }
             null -> Unit
         }
         Box(Modifier.fillMaxSize().backdropFades(Palette.Background))
@@ -195,9 +216,46 @@ fun HeroInfo(state: HeroState, modifier: Modifier = Modifier) {
             is HeroModel.Live -> LiveInfo(model)
             is HeroModel.Channel -> ChannelInfo(model)
             is HeroModel.Vod -> VodInfo(model)
+            is HeroModel.CategoryItem -> CategoryInfo(model, state)
         }
     }
 }
+
+@Composable
+private fun CategoryInfo(model: HeroModel.CategoryItem, state: HeroState) {
+    val helix = LocalAppContainer.current.helix
+    val id = model.category.id
+    // What's on in the category right now: its most-watched stream, looked up once every few minutes at most.
+    val top by produceState(state.topStreams[id]?.second, id) {
+        // The state outlives a change of category: start from this one's answer, never the last one's.
+        val cached = state.topStreams[id]
+        value = cached?.second
+        if (cached != null && System.currentTimeMillis() - cached.first < TOP_STREAM_FRESH_MS) return@produceState
+        value = try {
+            helix.streams(gameId = id, first = 1).items.firstOrNull().also {
+                state.topStreams[id] = System.currentTimeMillis() to it
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+    NameLine(model.category.name, "")
+    Text("A category you follow in S0undPlus", style = AppType.BodyM, color = Palette.TextTertiary)
+    top?.let { s ->
+        Text(
+            "Top stream now: ${s.userName} · ${Format.count(s.viewerCount)} viewers",
+            style = AppType.BodyL,
+            color = Palette.Muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    Text("OK opens ${model.category.name}", style = AppType.BodyM, color = Palette.TextTertiary)
+}
+
+private const val TOP_STREAM_FRESH_MS = 5 * 60_000L
 
 @Composable
 private fun NameLine(name: String, avatarUrl: String) {

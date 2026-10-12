@@ -16,6 +16,7 @@ import com.s0undplus.twitch.chat.ThirdPartyEmotes
 import com.s0undplus.twitch.eventsub.RaidWatcher
 import com.s0undplus.twitch.playback.PlaybackApi
 import com.s0undplus.twitch.playback.SeekPreviewApi
+import com.s0undplus.tv.data.Follows
 import com.s0undplus.twitch.update.UpdateChecker
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -55,6 +56,9 @@ class AppContainer(
     val recentMessages = RecentMessagesApi(http, config)
     val vodChat = VodChatApi(http, config)
     val seekPreviews = SeekPreviewApi(http, config)
+
+    /** Who the viewer follows, on Twitch and in this app; behind the follow badges everywhere. */
+    val follows = Follows(helix, settings, appScope)
     val raids = RaidWatcher(http, config, session)
     val updates = UpdateChecker(http, BuildConfig.UPDATE_REPO, updateApiUrl)
 

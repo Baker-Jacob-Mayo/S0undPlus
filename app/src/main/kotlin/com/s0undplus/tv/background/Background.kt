@@ -48,7 +48,14 @@ class LiveCheckWorker(context: Context, params: WorkerParameters) : CoroutineWor
         if (container.session.tokens.value == null) return Result.success() // signed out: nothing to do, quietly
 
         val live = try {
-            container.helix.followedStreams(first = 100).items
+            // Channels followed in this app count too: Twitch only knows about the account's own follows.
+            val twitch = container.helix.followedStreams(first = 100).items
+            val listed = twitch.map { it.userLogin.lowercase() }.toSet()
+            val appOnly = container.settings.appFollows.first().map { it.login.lowercase() }.filterNot { it in listed }
+            // Together, most viewers first: the home-screen row and the notifications each take only the top few.
+            (twitch + appOnly.chunked(100).flatMap { container.helix.streamsByLogins(it) })
+                .distinctBy { it.userId }
+                .sortedByDescending { it.viewerCount }
         } catch (e: TwitchApiException) {
             // 401/403: the login expired or lost its scope. Retrying won't help; the app will ask to sign in again.
             return if (e.status == 401 || e.status == 403) Result.success() else Result.retry()

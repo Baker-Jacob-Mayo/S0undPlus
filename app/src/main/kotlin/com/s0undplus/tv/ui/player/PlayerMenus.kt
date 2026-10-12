@@ -21,6 +21,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.tv.material3.Icon
+import com.s0undplus.tv.ui.components.FollowSourceBadge
 import com.s0undplus.tv.ui.theme.AppType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -115,6 +116,7 @@ internal fun PeekPanel(
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize(),
                                 )
+                                FollowSourceBadge(stream.userLogin, Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp))
                             }
                             Column(Modifier.padding(10.dp)) {
                                 Text(stream.userName, style = MaterialTheme.typography.titleSmall, color = Palette.OnBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -20,6 +20,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -133,4 +140,29 @@ fun PillButton(
 @Composable
 fun SkeletonBlock(modifier: Modifier, radius: Dp = Radius.card) {
     Box(modifier.background(Palette.Surface, RoundedCornerShape(radius)))
+}
+
+/** A round button showing only [icon]; its [label] appears beside it while it has focus. */
+@Composable
+fun RoundIconButton(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Box(contentAlignment = Alignment.CenterStart) {
+        ControlSurface(
+            onClick = onClick,
+            modifier = modifier.size(40.dp).onFocusChanged { focused = it.isFocused },
+            shape = CircleShape,
+        ) { f ->
+            Icon(icon, contentDescription = label, tint = if (f) Palette.OnBrand else Palette.OnBackground, modifier = Modifier.size(20.dp))
+        }
+        if (focused) {
+            Text(
+                label,
+                style = AppType.Button,
+                color = Palette.OnBackground,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.offset(x = 52.dp).wrapContentWidth(unbounded = true),
+            )
+        }
+    }
 }

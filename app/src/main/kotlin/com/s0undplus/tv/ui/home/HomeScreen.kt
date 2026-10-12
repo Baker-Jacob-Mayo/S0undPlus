@@ -32,6 +32,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,6 +61,7 @@ import com.s0undplus.tv.LocalAppContainer
 import com.s0undplus.tv.data.AppSettings
 import com.s0undplus.tv.ui.components.AvatarTile
 import com.s0undplus.tv.ui.components.CategoryPoster
+import com.s0undplus.tv.ui.components.CategoryTile
 import com.s0undplus.tv.ui.components.ClockText
 import com.s0undplus.tv.ui.components.HeroBackdrop
 import com.s0undplus.tv.ui.components.HeroInfo
@@ -96,7 +98,9 @@ import com.s0undplus.twitch.ChannelResult
 import com.s0undplus.twitch.FollowedChannel
 import com.s0undplus.twitch.Stream
 import com.s0undplus.twitch.TwitchLanguages
+import com.s0undplus.twitch.library.AppFollow
 import com.s0undplus.twitch.library.FavoriteChannel
+import com.s0undplus.twitch.library.FollowedCategory
 import com.s0undplus.twitch.library.HistoryEntry
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
@@ -105,6 +109,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
@@ -162,10 +167,26 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     val history: StateFlow<List<HistoryEntry>> =
         c.settings.history.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _favoriteStreams = MutableStateFlow<Map<String, Stream>>(emptyMap())
+    /** Channels and categories followed in this app (the account's own follows come from Twitch). */
+    val appFollows: StateFlow<List<AppFollow>> = c.follows.channels
+    val followedCategories: StateFlow<List<FollowedCategory>> = c.follows.categories
 
-    /** Favorites that are live right now, by lowercase login. */
-    val favoriteStreams: StateFlow<Map<String, Stream>> = _favoriteStreams.asStateFlow()
+    private val _extraLive = MutableStateFlow<Map<String, Stream>>(emptyMap())
+
+    /**
+     * Favorites and channels followed in this app that are live right now, by lowercase login. The account's own
+     * follows that are live come with [following].
+     */
+    val extraLive: StateFlow<Map<String, Stream>> = _extraLive.asStateFlow()
+
+    private val _extraLiveKnown = MutableStateFlow(false)
+    private var extraJob: Job? = null
+
+    /** The favorites' and app follows' logins, once both have been read from storage (null until then). */
+    private var extraLogins: List<String>? = null
+
+    /** Whether [extraLive] has been asked for at least once: until then a channel followed in this app may be live. */
+    val extraLiveKnown: StateFlow<Boolean> = _extraLiveKnown.asStateFlow()
 
     private val _profiles = MutableStateFlow<Map<String, Profile>>(emptyMap())
     private val profilesRequested = HashSet<String>()
@@ -197,7 +218,16 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     private var searchJob: Job? = null
 
     init {
-        viewModelScope.launch { favorites.collect { refreshFavoriteStatus(it) } }
+        // From storage itself, not the StateFlows above: those start out empty, and an empty first list would ask
+        // about nobody and call the answer known.
+        viewModelScope.launch {
+            combine(c.settings.favorites, c.settings.appFollows) { f, a -> f.map { it.login } + a.map { it.login } }
+                .distinctUntilChanged()
+                .collect {
+                    extraLogins = it
+                    refreshExtraLive(it)
+                }
+        }
         // Changing the language (here or in Settings) reloads the Language page.
         viewModelScope.launch {
             c.settings.settings.map { it.language }.distinctUntilChanged().drop(1).collect { language.refresh() }
@@ -207,22 +237,28 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     fun refreshFollowing() {
         following.ensureFresh(FRESH_MS)
         offline.ensureFresh(OFFLINE_FRESH_MS)
-        refreshFavoriteStatus(favorites.value)
+        extraLogins?.let(::refreshExtraLive)
+        c.follows.refreshTwitch()
     }
 
-    private fun refreshFavoriteStatus(list: List<FavoriteChannel>) {
-        viewModelScope.launch {
-            if (list.isEmpty()) {
-                _favoriteStreams.value = emptyMap()
+    private fun refreshExtraLive(logins: List<String>) {
+        val distinct = logins.map { it.lowercase() }.distinct()
+        // The newest question wins: an older answer arriving later would undo it.
+        extraJob?.cancel()
+        extraJob = viewModelScope.launch {
+            if (distinct.isEmpty()) {
+                _extraLive.value = emptyMap()
+                _extraLiveKnown.value = true
                 return@launch
             }
             try {
-                _favoriteStreams.value = c.helix.streamsByLogins(list.map { it.login }).associateBy { it.userLogin.lowercase() }
+                _extraLive.value = distinct.chunked(100).flatMap { c.helix.streamsByLogins(it) }.associateBy { it.userLogin.lowercase() }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // keep the previous status; favorites still show, just possibly as offline
+                // keep the previous status; these channels still show, just possibly as offline
             }
+            _extraLiveKnown.value = true
         }
     }
 
@@ -354,8 +390,8 @@ fun HomeScreen(
     }
 
     val live by vm.following.state.collectAsStateWithLifecycle()
-    val favoriteLive by vm.favoriteStreams.collectAsStateWithLifecycle()
-    val liveCount = remember(live.items, favoriteLive) { (live.items.map { it.userLogin.lowercase() } + favoriteLive.keys).toSet().size }
+    val extraLive by vm.extraLive.collectAsStateWithLifecycle()
+    val liveCount = remember(live.items, extraLive) { (live.items.map { it.userLogin.lowercase() } + extraLive.keys).toSet().size }
     val updateState by updates.state.collectAsStateWithLifecycle()
     val updateDot = updateState is UpdateUi.Available || updateState is UpdateUi.NeedsPermission ||
         updateState is UpdateUi.Downloading || updateState is UpdateUi.SignatureMismatch
@@ -384,7 +420,7 @@ fun HomeScreen(
             Box(Modifier.weight(1f)) {
                 val focus = PageFocus(vm.tab, entryRequesters.getValue(vm.tab), vm)
                 when (vm.tab) {
-                    HomeTab.Following -> FollowingContent(vm, focus, preview, onOpenStream, onOpenChannel, onPlay, onEmpty = ::focusRail)
+                    HomeTab.Following -> FollowingContent(vm, focus, preview, onOpenStream, onOpenChannel, onOpenCategory, onPlay, onEmpty = ::focusRail)
                     HomeTab.Live -> StreamGridPage(
                         vm, focus, vm.live, preview, onOpenStream, onOpenChannel,
                         title = "Live",
@@ -534,34 +570,49 @@ private fun FollowingContent(
     preview: PreviewController?,
     onOpenStream: (Stream) -> Unit,
     onOpenChannel: (String) -> Unit,
+    onOpenCategory: (Category) -> Unit,
     onPlay: (PlayTarget) -> Unit,
     onEmpty: () -> Unit,
 ) {
     val live by vm.following.state.collectAsStateWithLifecycle()
     val offline by vm.offline.state.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val favoriteLive by vm.favoriteStreams.collectAsStateWithLifecycle()
+    val extraLive by vm.extraLive.collectAsStateWithLifecycle()
+    val appFollows by vm.appFollows.collectAsStateWithLifecycle()
+    val extraKnown by vm.extraLiveKnown.collectAsStateWithLifecycle()
+    val categories by vm.followedCategories.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshFollowing() }
 
     val favoriteLogins = remember(favorites) { favorites.map { it.login.lowercase() }.toSet() }
-    val offlineItems = remember(offline.items, live.items, favoriteLive) {
-        val liveLogins = live.items.map { it.userLogin.lowercase() }.toSet() + favoriteLive.keys
-        offline.items.filter { it.login.lowercase() !in liveLogins }
+    // Live now: channels followed on Twitch or in the app, together, most viewers first; followed categories after them.
+    val liveChannels = remember(live.items, appFollows, extraLive) {
+        (live.items + appFollows.mapNotNull { extraLive[it.login.lowercase()] })
+            .distinctBy { it.userLogin.lowercase() }
+            .sortedByDescending { it.viewerCount }
+    }
+    val offlineItems = remember(offline.items, liveChannels, extraLive, extraKnown, appFollows) {
+        val liveLogins = liveChannels.map { it.userLogin.lowercase() }.toSet() + extraLive.keys
+        // Not before their status is known: one that turns out to be live would jump from here to Live now. They go
+        // first, and Twitch's list (which arrives a page at a time) after them, so later pages never move anything.
+        val appOffline = if (!extraKnown) emptyList() else appFollows.filter { it.login.lowercase() !in liveLogins }
+        val appLogins = appOffline.mapTo(HashSet()) { it.login.lowercase() }
+        appOffline.map { FollowedChannel(id = it.userId.orEmpty(), login = it.login, displayName = it.displayName) } +
+            offline.items.filter { it.login.lowercase() !in liveLogins && it.login.lowercase() !in appLogins }
     }
     val continueWatching = remember(history) { history.take(CONTINUE_WATCHING_COUNT) }
-    LaunchedEffect(offlineItems.size, favorites, live.items.size) {
-        vm.loadProfiles(live.items.map { it.userId } + favorites.mapNotNull { it.userId } + offlineItems.map { it.id })
+    LaunchedEffect(offlineItems.size, favorites, liveChannels.size) {
+        vm.loadProfiles(liveChannels.map { it.userId } + favorites.mapNotNull { it.userId } + offlineItems.map { it.id })
     }
 
-    val hasAnything = live.items.isNotEmpty() || favorites.isNotEmpty() || offlineItems.isNotEmpty()
+    val hasAnything = liveChannels.isNotEmpty() || favorites.isNotEmpty() || offlineItems.isNotEmpty() || categories.isNotEmpty()
     if (!hasAnything) {
         when {
-            live.loading || offline.loading || (live.loadedAtMillis == 0L && live.error == null) -> FollowingSkeleton()
+            live.loading || offline.loading || (live.loadedAtMillis == 0L && live.error == null) || !extraKnown -> FollowingSkeleton()
             live.error != null -> MessageState(live.error.orEmpty(), actionLabel = "Try again", onAction = vm::refreshFollowing)
             else -> {
-                MessageState("You aren't following anyone yet. Follow channels on twitch.tv and they'll appear here.")
+                MessageState("You aren't following anyone yet. Follow channels on twitch.tv, or on a channel page here, and they'll appear here.")
                 LaunchedEffect(Unit) {
                     if (focus.shouldFocusNow()) {
                         focus.done()
@@ -583,31 +634,37 @@ private fun FollowingContent(
     }
 
     val firstKey: String? = favorites.firstOrNull()?.let { "fav:${it.login}" }
-        ?: live.items.firstOrNull()?.let { "live:${it.userId}" }
+        ?: liveChannels.firstOrNull()?.let { "live:${it.userId}" }
+        ?: categories.firstOrNull()?.let { "cat:${it.id}" }
         ?: continueWatching.firstOrNull()?.let { "vod:${it.videoId}" }
         ?: offlineItems.firstOrNull()?.let { "off:${it.login}" }
-    val keys = remember(favorites, live.items, continueWatching, offlineItems) {
+    val keys = remember(favorites, liveChannels, categories, continueWatching, offlineItems) {
         buildSet {
             favorites.forEach { add("fav:${it.login}") }
-            live.items.forEach { add("live:${it.userId}") }
+            liveChannels.forEach { add("live:${it.userId}") }
+            categories.forEach { add("cat:${it.id}") }
             continueWatching.forEach { add("vod:${it.videoId}") }
             offlineItems.forEach { add("off:${it.login}") }
         }
     }
-    val entryKey = (focus.restoreKey as? String)?.takeIf { it in keys } ?: firstKey
+    val focusedKey = (focus.restoreKey as? String)?.takeIf { it in keys }
+    val entryKey = focusedKey ?: firstKey
     val hero = vm.hero
+    // Who is live is known: rows no longer move about, so focus can go to the first card without it moving away.
+    val settled = (live.loadedAtMillis != 0L || live.error != null) && extraKnown
 
     // The hero describes the first card until something is focused.
     val firstModel: HeroModel? = favorites.firstOrNull()?.let { fav ->
-        favoriteLive[fav.login.lowercase()]?.let { liveModel(it, "Favorites") } ?: channelModel(fav.userId, fav.displayName, true, "Favorites")
-    } ?: live.items.firstOrNull()?.let { liveModel(it, "Live now") }
+        extraLive[fav.login.lowercase()]?.let { liveModel(it, "Favorites") } ?: channelModel(fav.userId, fav.displayName, true, "Favorites")
+    } ?: liveChannels.firstOrNull()?.let { liveModel(it, "Live now") }
+        ?: categories.firstOrNull()?.let { HeroModel.CategoryItem(it.toCategory(), "Live now") }
         ?: continueWatching.firstOrNull()?.let { HeroModel.Vod(it, "Continue watching") }
         ?: offlineItems.firstOrNull()?.let { channelModel(it.id, it.displayName, false, "Offline") }
-    LaunchedEffect(firstModel != null, hero.shown == null) {
-        if (hero.shown == null && firstModel != null) hero.showNow(firstModel)
+    LaunchedEffect(firstModel, hero.shown == null) {
+        if (firstModel != null && (hero.shown == null || focusedKey == null)) hero.showNow(firstModel)
     }
-    LaunchedEffect(entryKey != null) {
-        if (entryKey != null && focus.shouldFocusNow()) {
+    LaunchedEffect(entryKey != null && settled) {
+        if (entryKey != null && settled && focus.shouldFocusNow()) {
             focusSoon(focus.entry)
             focus.done()
         }
@@ -622,6 +679,21 @@ private fun FollowingContent(
         }
 
     val listState = vm.listStates.getValue(HomeTab.Following)
+    // A row that appears above the top one (someone you follow goes live) would open above the screen, because the
+    // list keeps its first row where it is. Unless the viewer is on a card, stay at the top.
+    val topRow = when {
+        favorites.isNotEmpty() -> "row-fav"
+        live.error != null && live.items.isEmpty() -> "live-error"
+        liveChannels.isNotEmpty() || categories.isNotEmpty() -> "row-live"
+        continueWatching.isNotEmpty() -> "row-vod"
+        else -> "off-title"
+    }
+    var shownTopRow by remember { mutableStateOf(topRow) }
+    LaunchedEffect(topRow) {
+        if (topRow == shownTopRow) return@LaunchedEffect
+        shownTopRow = topRow
+        if (focusedKey == null && listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0)
+    }
     val nearEnd by remember(listState) {
         derivedStateOf {
             val info = listState.layoutInfo
@@ -652,7 +724,7 @@ private fun FollowingContent(
                             MediaRow("Favorites", vm.rowState("Following/fav")) {
                                 items(favorites, key = { it.login }, contentType = { "card" }) { fav ->
                                     val key = "fav:${fav.login}"
-                                    val stream = favoriteLive[fav.login.lowercase()]
+                                    val stream = extraLive[fav.login.lowercase()]
                                     if (stream != null) {
                                         StreamCard(
                                             stream, { onOpenStream(stream) },
@@ -666,6 +738,8 @@ private fun FollowingContent(
                                             fav.displayName, fav.userId?.let { profiles[it]?.avatarUrl }.orEmpty(),
                                             onClick = { onOpenChannel(fav.login) },
                                             modifier = cardModifier(key) { channelModel(fav.userId, fav.displayName, true, "Favorites") }.width(Layout.cardWidth),
+                                            isFavorite = true,
+                                            login = fav.login,
                                         )
                                     }
                                 }
@@ -685,16 +759,24 @@ private fun FollowingContent(
                             }
                         }
                     }
-                    if (live.items.isNotEmpty()) {
+                    if (liveChannels.isNotEmpty() || categories.isNotEmpty()) {
                         item(key = "row-live", contentType = "cardRow") {
-                            MediaRow("Live now", vm.rowState("Following/live"), count = live.items.size, onNearEnd = vm.following::loadMore) {
-                                items(live.items, key = { it.userId }, contentType = { "card" }) { stream ->
+                            MediaRow("Live now", vm.rowState("Following/live"), count = liveChannels.size + categories.size, onNearEnd = vm.following::loadMore) {
+                                items(liveChannels, key = { "s:${it.userId}" }, contentType = { "card" }) { stream ->
                                     StreamCard(
                                         stream, { onOpenStream(stream) },
                                         cardModifier("live:${stream.userId}") { liveModel(stream, "Live now") }.width(Layout.cardWidth),
                                         preview, isFavorite = stream.userLogin.lowercase() in favoriteLogins,
                                         onLongClick = { onOpenChannel(stream.userLogin) },
                                         showTitleOnFocus = false,
+                                    )
+                                }
+                                items(categories, key = { "c:${it.id}" }, contentType = { "category" }) { followed ->
+                                    val category = followed.toCategory()
+                                    CategoryTile(
+                                        category,
+                                        onClick = { onOpenCategory(category) },
+                                        modifier = cardModifier("cat:${followed.id}") { HeroModel.CategoryItem(category, "Live now") }.width(Layout.cardWidth),
                                     )
                                 }
                             }
@@ -719,12 +801,16 @@ private fun FollowingContent(
                         itemsIndexed(offlineItems.chunked(OFFLINE_PER_LINE), key = { i, _ -> "off-line:$i" }, contentType = { _, _ -> "avatarLine" }) { _, line ->
                             Row(Modifier.padding(start = Layout.keyline, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 for (channel in line) {
-                                    val favorite = channel.login.lowercase() in favoriteLogins
-                                    AvatarTile(
-                                        channel.displayName, profiles[channel.id]?.avatarUrl.orEmpty(),
-                                        onClick = { onOpenChannel(channel.login) },
-                                        modifier = cardModifier("off:${channel.login}") { channelModel(channel.id, channel.displayName, favorite, "Offline") },
-                                    )
+                                    // Keyed by channel, so a tile that moves within its line keeps its focus.
+                                    key(channel.login) {
+                                        val favorite = channel.login.lowercase() in favoriteLogins
+                                        AvatarTile(
+                                            channel.displayName, profiles[channel.id]?.avatarUrl.orEmpty(),
+                                            onClick = { onOpenChannel(channel.login) },
+                                            modifier = cardModifier("off:${channel.login}") { channelModel(channel.id, channel.displayName, favorite, "Offline") },
+                                            login = channel.login,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -739,6 +825,8 @@ private fun FollowingContent(
         }
     }
 }
+
+private fun FollowedCategory.toCategory() = Category(id = id, name = name, boxArtUrl = boxArtUrl)
 
 private fun HistoryEntry.toPlayTarget() = PlayTarget.Vod(
     id = videoId,
@@ -902,6 +990,7 @@ private fun SearchContent(vm: HomeViewModel, focus: PageFocus, onOpenCategory: (
                                             onClick = { onOpenChannel(channel.login) },
                                             modifier = result("ch:${channel.id}"),
                                             live = channel.isLive,
+                                            login = channel.login,
                                             subtitle = if (channel.isLive) channel.gameName.ifBlank { "Live" } else "Offline",
                                         )
                                     }

@@ -14,6 +14,7 @@ import com.s0undplus.twitch.TwitchJson
 import com.s0undplus.twitch.User
 import com.s0undplus.twitch.Video
 import com.s0undplus.twitch.VideoType
+import com.s0undplus.twitch.boxArtTemplate
 import com.s0undplus.twitch.auth.AuthSession
 import com.s0undplus.twitch.await
 import com.s0undplus.twitch.chat.BadgeDirectory
@@ -94,7 +95,9 @@ class HelixApi(
         )
 
     suspend fun searchCategories(query: String, first: Int = 20): Page<Category> =
-        page("search/categories", Category.serializer(), "query" to query, "first" to first)
+        page("search/categories", Category.serializer(), "query" to query, "first" to first).let { p ->
+            p.copy(items = p.items.map { it.copy(boxArtUrl = boxArtTemplate(it.boxArtUrl)) })
+        }
 
     suspend fun userByLogin(login: String): User? =
         page("users", User.serializer(), "login" to login).items.firstOrNull()

@@ -29,6 +29,7 @@ sealed interface PlayTarget {
 
 sealed interface Route {
     data object Home : Route
+    /** [boxArtUrl] is Twitch's template, with `{width}x{height}` still in it. */
     data class Category(val id: String, val name: String, val boxArtUrl: String = "") : Route
     data class Channel(val login: String) : Route
     data class Play(val target: PlayTarget) : Route
